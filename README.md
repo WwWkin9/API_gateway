@@ -1,6 +1,6 @@
 # C++ API Gateway
 
-一个基于 **Reactor + 线程池** 架构的高性能 C++ API 网关，使用 epoll 实现非阻塞 I/O，支持路由转发、过滤器链、连接管理和 Keep-Alive。
+一个基于 **Reactor + 线程池** 架构的HTTP 反向代理网关，使用 epoll 实现非阻塞 I/O，支持路由转发、过滤器链、连接管理和 Keep-Alive。
 
 ## 项目结构
 
