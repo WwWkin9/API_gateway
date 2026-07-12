@@ -1,0 +1,70 @@
+[INFO] Base URL: http://127.0.0.1:8080
+[INFO] Lua script: scripts/wrk_mixed.lua
+[INFO] CSV output: bench_results/summary_20260712_182645.csv
+[INFO] Log output: bench_results/run_20260712_182645.log
+
+[STEP] Warmup
+[INFO] warmup: c=50 t=8 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  8 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    26.06ms   18.16ms 151.95ms   89.09%
+    Req/Sec   251.01    102.42   686.00     70.16%
+  19972 requests in 10.04s, 2.86MB read
+Requests/sec:   1988.47
+Transfer/sec:    291.59KB
+
+[STEP] Staircase benchmark
+[INFO] staircase: c=50 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    23.62ms   14.25ms 189.86ms   92.25%
+    Req/Sec   267.82     76.33   555.00     78.78%
+  63870 requests in 30.09s, 9.13MB read
+Requests/sec:   2122.69
+Transfer/sec:    310.58KB
+
+[INFO] staircase: c=100 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    42.93ms   12.91ms 192.59ms   87.04%
+    Req/Sec   281.45     56.82   640.00     78.30%
+  67318 requests in 30.08s, 9.62MB read
+Requests/sec:   2237.89
+Transfer/sec:    327.56KB
+
+[INFO] staircase: c=200 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    83.15ms   15.46ms 156.47ms   69.62%
+    Req/Sec   300.50     64.70   613.00     78.66%
+  71949 requests in 30.08s, 10.30MB read
+Requests/sec:   2392.31
+Transfer/sec:    350.68KB
+
+[INFO] staircase: c=400 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   179.97ms   20.88ms 291.32ms   82.09%
+    Req/Sec   277.91    112.01     1.01k    61.30%
+  66428 requests in 30.09s, 9.51MB read
+Requests/sec:   2207.67
+Transfer/sec:    323.48KB
+
+[INFO] staircase: c=800 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 800 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   350.33ms   52.54ms 793.41ms   90.06%
+    Req/Sec   292.86    197.24     0.99k    73.29%
+  67684 requests in 30.08s, 9.68MB read
+Requests/sec:   2249.99
+Transfer/sec:    329.65KB
+
+[DONE] Benchmark finished.
+[DONE] CSV: bench_results/summary_20260712_182645.csv
+[DONE] LOG: bench_results/run_20260712_182645.log

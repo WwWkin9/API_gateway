@@ -210,3 +210,93 @@ add_executable(product_server backend/product_server.cpp)
 - **并发模型**：请求解析与转发在独立线程池中执行，Reactor 线程只负责 I/O 事件分发
 - **内存管理**：使用 `std::unique_ptr` 管理过滤器所有权，RAII 管理 socket 生命周期
 - **超时控制**：后端 connect/send/recv 均设置超时，防止工作线程被阻塞连接耗尽
+
+## 压测
+
+推荐使用 `wrk` 做网关压测。仓库已提供可复用脚本：
+
+- `scripts/wrk_mixed.lua`：50% `GET /api/user` + 50% `POST /api/order`
+- `scripts/bench_gateway.sh`：自动执行 warmup + 阶梯压测，并输出 CSV 汇总
+
+### 安装 wrk
+
+```bash
+sudo apt-get update
+sudo apt-get install -y wrk
+```
+
+### 启动被测服务
+
+```bash
+# 终端 1
+./build/user_server
+
+# 终端 2
+./build/order_server
+
+# 终端 3
+./build/gateway
+```
+
+### 一键压测
+
+```bash
+./scripts/bench_gateway.sh
+```
+
+默认行为：
+
+- warmup：`50` 连接，`10s`
+- 阶梯压测：连接数 `50 100 200 400 800`
+- 每档压测时长：`30s`
+- 线程数：`8`
+- 结果输出：`bench_results/summary_*.csv` 与 `bench_results/run_*.log`
+
+### 自定义参数
+
+```bash
+THREADS=12 DURATION=60s CONNECTIONS_LIST="100 200 400 800 1200" ./scripts/bench_gateway.sh http://127.0.0.1:8080
+```
+
+可用环境变量：
+
+- `THREADS`：wrk 线程数
+- `DURATION`：每档压测时长
+- `WARMUP_DURATION`：预热时长
+- `CONNECTIONS_LIST`：阶梯连接数列表
+- `OUTPUT_DIR`：结果目录
+- `LUA_SCRIPT`：自定义 wrk Lua 脚本
+
+### 指标解读建议
+
+- 关注 `requests_per_sec`、`p99`、`non_2xx_3xx`、`socket_errors`
+- 若 `p99` 随连接数上升明显恶化且错误率升高，通常已到容量拐点
+- 若网关压测结果偏低，优先排查后端服务是否先成为瓶颈
+
+### 多次结果对比
+
+仓库提供了结果对比脚本 `scripts/compare_bench.sh`，用于对最近多次压测结果做横向比较。
+
+默认行为：
+
+- 输入目录：`bench_results`
+- 选择最近 `5` 份 `summary_*.csv`
+- 只比较 `staircase` 阶段
+- 输出文件：`bench_results/compare_*.csv`
+
+执行：
+
+```bash
+./scripts/compare_bench.sh
+```
+
+自定义示例：
+
+```bash
+LATEST_N=10 PHASE=staircase INPUT_DIR=bench_results OUTPUT_DIR=bench_results ./scripts/compare_bench.sh
+```
+
+输出表结构：
+
+- 每一行是一个连接数（`connections`）
+- 每次运行会展开为 4 列：`rps`、`p99`、`non_2xx_3xx`、`socket_errors`
