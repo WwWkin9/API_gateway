@@ -1,7 +1,7 @@
-#include "gateway/config.h"
-#include "gateway/filter_logging.h"
-#include "gateway/filter_request_id.h"
-#include "gateway/gateway.h"
+#include "gateway/core/config.h"
+#include "gateway/core/gateway.h"
+#include "gateway/filter/logging_filter.h"
+#include "gateway/filter/request_id_filter.h"
 
 int main() {
     GatewayConfig cfg = load_default_config();

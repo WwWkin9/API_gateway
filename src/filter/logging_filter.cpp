@@ -1,4 +1,4 @@
-#include "gateway/filter_logging.h"
+#include "gateway/filter/logging_filter.h"
 
 #include <ctime>
 #include <iostream>

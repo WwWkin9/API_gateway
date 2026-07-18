@@ -1,4 +1,5 @@
 /.cache
 /.claude
 /.vscode
-/build
+/build/compile_commands.json
+/build/

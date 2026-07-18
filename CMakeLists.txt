@@ -8,14 +8,35 @@ include_directories(include)
 
 add_executable(gateway
     src/main.cpp
-    src/config.cpp
-    src/http_request.cpp
-    src/http_response.cpp
-    src/gateway.cpp
-    src/utils.cpp
-    src/thread_pool.cpp
-    src/filter_logging.cpp
-    src/filter_request_id.cpp
+
+    # core
+    src/core/config.cpp
+    src/core/gateway.cpp
+    src/core/router.cpp
+
+    # net
+    src/net/event_loop.cpp
+    src/net/tcp_server.cpp
+    src/net/connection.cpp
+    src/net/buffer.cpp
+
+    # http
+    src/http/parser.cpp
+    src/http/request.cpp
+    src/http/response.cpp
+
+    # proxy
+    src/proxy/proxy.cpp
+    src/proxy/backend_pool.cpp
+    src/proxy/load_balancer.cpp
+
+    # filter
+    src/filter/logging_filter.cpp
+    src/filter/request_id_filter.cpp
+
+    # utils
+    src/utils/utils.cpp
+    src/utils/thread_pool.cpp
 )
 
 add_executable(user_server backend/user_server.cpp)

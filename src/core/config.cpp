@@ -1,4 +1,4 @@
-#include "gateway/config.h"
+#include "gateway/core/config.h"
 
 // 默认路由配置
 GatewayConfig load_default_config() {

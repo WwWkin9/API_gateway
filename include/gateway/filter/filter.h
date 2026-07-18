@@ -1,7 +1,7 @@
 #pragma once
 
-#include "gateway/http_request.h"
-#include "gateway/http_response.h"
+#include "gateway/http/request.h"
+#include "gateway/http/response.h"
 
 #include <ctime>
 #include <string>

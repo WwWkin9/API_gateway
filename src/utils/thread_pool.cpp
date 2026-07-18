@@ -1,4 +1,4 @@
-#include "gateway/thread_pool.h"
+#include "gateway/utils/thread_pool.h"
 
 ThreadPool::ThreadPool(size_t num_threads) : stop_(false) {
     for (size_t i = 0; i < num_threads; ++i) {

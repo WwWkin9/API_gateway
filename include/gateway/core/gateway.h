@@ -1,8 +1,8 @@
 #pragma once
 
-#include "config.h"
-#include "filter.h"
-#include "thread_pool.h"
+#include "gateway/core/config.h"
+#include "gateway/filter/filter.h"
+#include "gateway/utils/thread_pool.h"
 
 #include <memory>
 #include <unordered_map>

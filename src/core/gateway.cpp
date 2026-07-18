@@ -1,8 +1,8 @@
-#include "gateway/gateway.h"
+#include "gateway/core/gateway.h"
 
-#include "gateway/http_request.h"
-#include "gateway/http_response.h"
-#include "gateway/utils.h"
+#include "gateway/http/request.h"
+#include "gateway/http/response.h"
+#include "gateway/utils/utils.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>

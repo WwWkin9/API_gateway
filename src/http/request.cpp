@@ -1,4 +1,4 @@
-#include "gateway/http_request.h"
+#include "gateway/http/request.h"
 
 #include <algorithm>
 #include <cctype>

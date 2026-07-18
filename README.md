@@ -5,31 +5,77 @@
 ## 项目结构
 
 ```
-├── CMakeLists.txt                  # CMake 构建文件
+API_gateway/
+├── CMakeLists.txt
+├── README.md
+├── docs/
+│   ├── architecture.md
+│   └── benchmark.md
 ├── include/gateway/
-│   ├── config.h                    # 配置结构体与路由定义
-│   ├── filter.h                    # 过滤器基类与上下文
-│   ├── filter_logging.h            # 日志过滤器
-│   ├── filter_request_id.h         # 请求 ID 过滤器
-│   ├── gateway.h                   # 网关核心类
-│   ├── http_request.h              # HTTP 请求解析
-│   ├── http_response.h             # HTTP 响应构造
-│   ├── thread_pool.h               # 线程池
-│   └── utils.h                     # 工具函数
+│   ├── core/
+│   │   ├── gateway.h               # 网关核心类
+│   │   ├── router.h                # 路由管理
+│   │   └── config.h                # 配置结构体与路由定义
+│   ├── net/
+│   │   ├── event_loop.h            # 事件循环（epoll）
+│   │   ├── tcp_server.h            # TCP 服务器
+│   │   ├── connection.h            # 连接管理
+│   │   ├── buffer.h                # 缓冲区
+│   │   └── socket.h                # Socket 工具
+│   ├── http/
+│   │   ├── request.h               # HTTP 请求解析
+│   │   ├── response.h              # HTTP 响应构造
+│   │   └── parser.h                # HTTP 解析器
+│   ├── proxy/
+│   │   ├── proxy.h                 # 反向代理
+│   │   ├── backend.h               # 后端服务定义
+│   │   ├── backend_pool.h          # 后端连接池
+│   │   └── load_balancer.h         # 负载均衡器
+│   ├── filter/
+│   │   ├── filter.h                # 过滤器基类与上下文
+│   │   ├── logging_filter.h        # 日志过滤器
+│   │   └── request_id_filter.h     # 请求 ID 过滤器
+│   ├── timer/
+│   │   └── timer.h                 # 定时器
+│   ├── logger/
+│   │   ├── logger.h                # 日志器
+│   │   └── async_logger.h          # 异步日志器
+│   └── utils/
+│       ├── utils.h                 # 工具函数
+│       └── thread_pool.h           # 线程池
 ├── src/
 │   ├── main.cpp                    # 入口，组装过滤器并启动网关
-│   ├── gateway.cpp                 # 网关核心逻辑（epoll、转发、过滤）
-│   ├── config.cpp                  # 默认配置与路由表
-│   ├── http_request.cpp            # HTTP 请求解析实现
-│   ├── http_response.cpp           # HTTP 响应构造实现
-│   ├── thread_pool.cpp             # 线程池实现
-│   ├── filter_logging.cpp          # 日志过滤器实现
-│   ├── filter_request_id.cpp       # 请求 ID 过滤器实现
-│   └── utils.cpp                   # 工具函数实现
+│   ├── core/
+│   │   ├── gateway.cpp             # 网关核心逻辑（epoll、转发、过滤）
+│   │   ├── router.cpp              # 路由匹配实现
+│   │   └── config.cpp              # 默认配置与路由表
+│   ├── net/
+│   │   ├── event_loop.cpp          # 事件循环实现
+│   │   ├── tcp_server.cpp          # TCP 服务器实现
+│   │   ├── connection.cpp          # 连接管理实现
+│   │   └── buffer.cpp              # 缓冲区实现
+│   ├── http/
+│   │   ├── parser.cpp              # HTTP 解析器实现
+│   │   ├── request.cpp             # HTTP 请求解析实现
+│   │   └── response.cpp            # HTTP 响应构造实现
+│   ├── proxy/
+│   │   ├── proxy.cpp               # 反向代理实现
+│   │   ├── backend_pool.cpp        # 后端连接池实现
+│   │   └── load_balancer.cpp       # 负载均衡器实现
+│   ├── filter/
+│   │   ├── logging_filter.cpp      # 日志过滤器实现
+│   │   └── request_id_filter.cpp   # 请求 ID 过滤器实现
+│   ├── timer/
+│   ├── logger/
+│   └── utils/
+│       ├── utils.cpp               # 工具函数实现
+│       └── thread_pool.cpp         # 线程池实现
+├── tests/
+├── benchmark/
 ├── backend/
 │   ├── user_server.cpp             # 模拟用户服务（端口 9001）
 │   └── order_server.cpp            # 模拟订单服务（端口 9002）
-└── build/                          # 构建输出目录
+└── examples/
 ```
 
 ## 架构设计
@@ -180,7 +226,7 @@ curl -v http://localhost:8080/api/unknown
 
 ### 添加新路由
 
-编辑 `src/config.cpp`，在 `load_default_config()` 中添加：
+编辑 `src/core/config.cpp`，在 `load_default_config()` 中添加：
 
 ```cpp
 cfg.routes.push_back({"/api/product", {"127.0.0.1", 9003}});
@@ -188,7 +234,7 @@ cfg.routes.push_back({"/api/product", {"127.0.0.1", 9003}});
 
 ### 自定义过滤器
 
-1. 新建头文件 `include/gateway/filter_xxx.h`，继承 `Filter` 类
+1. 新建头文件 `include/gateway/filter/xxx_filter.h`，继承 `Filter` 类
 2. 重写 `on_request()` 和/或 `on_response()` 方法
 3. 在 `main.cpp` 中注册：
 

@@ -1,4 +1,4 @@
-#include "gateway/http_response.h"
+#include "gateway/http/response.h"
 
 // 响应序列化
 std::string HttpResponse::to_string() const {
