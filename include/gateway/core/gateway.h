@@ -3,6 +3,9 @@
 #include "gateway/core/config.h"
 #include "gateway/filter/filter.h"
 #include "gateway/utils/thread_pool.h"
+#include "gateway/net/event_loop.h"
+
+
 
 #include <memory>
 #include <unordered_map>
@@ -25,6 +28,7 @@ public:
 
 private:
     GatewayConfig config_;
+    std::shared_ptr<EventLoop> event_loop_;
     std::unordered_map<int, ConnState> conn_states_;
     std::vector<std::unique_ptr<Filter>> filters_;
     std::unique_ptr<ThreadPool> pool_;
@@ -34,8 +38,8 @@ private:
     void process_request(int fd, std::string raw);
 
     // reactor 回调：读请求并派发给线程池
-    void handle_client(int epfd, int fd);
-    void cleanup_idle_connections(int epfd);
+    void handle_client(int fd);
+    void cleanup_idle_connections();
 
     Backend route(const std::string& path) const;
     std::string forward_to_backend(const Backend& backend, const std::string& raw_request) const;

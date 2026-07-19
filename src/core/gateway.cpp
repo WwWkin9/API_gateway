@@ -13,7 +13,7 @@
 
 #include <ctime>
 #include <iostream>
-#include <string>
+#include <string.h>
 
 
 
@@ -131,15 +131,17 @@ std::string Gateway::forward_to_backend(const Backend& backend, const std::strin
     return resp.empty() ? make_502(false).to_string() : resp;
 }
 
-void Gateway::cleanup_idle_connections(int epfd) {
+void Gateway::cleanup_idle_connections() {
     std::time_t now = std::time(nullptr);
     std::time_t timeout = config_.keep_alive_timeout_sec;
     auto it = conn_states_.begin();
     while (it != conn_states_.end()) {
         if (now - it->second.last_active >= timeout) {
             int fd = it->first;
-            epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
+            event_loop_->del_fd(fd);
+            event_loop_->remove_callback(fd);
             close(fd);
+
             it = conn_states_.erase(it);
         } else {
             ++it;
@@ -147,22 +149,21 @@ void Gateway::cleanup_idle_connections(int epfd) {
     }
 }
 
-void Gateway::handle_client(int epfd, int fd) {
-    // reactor 线程读取完整请求数据
-    std::string raw = recv_all_request(fd, config_.max_request_size);
+void Gateway::handle_client(int fd) {
+   std::string raw = recv_all_request(fd, config_.max_request_size);
 
-    // 从 epoll 中移除该 fd，交给线程池处理
-    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
-    conn_states_.erase(fd);
+   event_loop_->del_fd(fd);
+   event_loop_->remove_callback(fd);
+   conn_states_.erase(fd);
 
-    if (raw.empty()) {
+   if (raw.empty()) {
         close(fd);
         return;
-    }
-
-    pool_->submit([this, fd, raw = std::move(raw)]() {
+   }
+   
+   pool_->submit([this, fd, raw = std::move(raw)]() {
         process_request(fd, std::move(raw));
-    });
+   }); 
 }
 
 void Gateway::process_request(int fd, std::string raw) {
@@ -251,71 +252,62 @@ void Gateway::process_request(int fd, std::string raw) {
 }
 
 void Gateway::run() {
+    // ---- 1. 初始化事件循环 ----
+    try {
+        event_loop_ = std::make_shared<EventLoop>(config_.max_epoll_events);
+    } catch (const std::exception& e) {
+        std::cerr << "Gateway::run exception: " << e.what() << std::endl;
+        return;
+    }
+
+    // ---- 2. 创建监听 socket ----
     int listen_fd = create_listen_socket(config_.listen_port);
     if (listen_fd < 0) {
-        std::cerr << "failed to create listen socket\n";
+        std::cerr << "Gateway::run create_listen_socket failed: " << strerror(errno) << std::endl;
         return;
     }
-
-    int epfd = epoll_create1(0);
-    if (epfd < 0) {
-        close(listen_fd);
-        return;
-    }
-
-    epoll_event ev{};
-    ev.events = EPOLLIN;
-    ev.data.fd = listen_fd;
-    epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev);
-
+   
+    // ---- 3. 创建线程池 ----
     pool_ = std::make_unique<ThreadPool>(config_.thread_count);
+
+    // ---- 4. 注册 listen_fd 的回调: accept 接受新连接 ----
+    event_loop_->add_fd(listen_fd, EPOLLIN);
+    event_loop_->set_callback(listen_fd, [this, listen_fd](int fd, uint32_t /*events*/){
+        (void)fd;
+
+        while (true) {
+            int cfd = accept(listen_fd, nullptr, nullptr);
+            if (cfd < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                break;
+            }
+            set_nonblocking(cfd);
+
+            // 注册新连接的 fd 到 epoll
+            event_loop_->add_fd(cfd, EPOLLIN);
+            event_loop_->set_callback(cfd, [this](int client_fd, uint32_t /*events*/){
+                handle_client(client_fd);
+            });
+            conn_states_[cfd] = {std::time(nullptr)};
+        }
+    });
+
+    // ---- 5. 注册空闲回调 ----
+    event_loop_->set_idle_callback([this](){
+        std::time_t now = std::time(nullptr);
+        if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
+            cleanup_idle_connections();
+            last_cleanup_time_ = now;
+        }
+    });
 
     std::cout << "Gateway listening on port " << config_.listen_port
               << " (reactor + " << config_.thread_count << " workers)\n";
 
-    // 按 epoll_wait 超时 1 秒预分配数组
-    std::vector<epoll_event> events(config_.max_epoll_events);
-
-    while (true) {
-        int n = epoll_wait(epfd, events.data(), events.size(), 1000);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        // 按间隔清理空闲连接（默认每 5 秒），避免每轮都 O(n) 扫描
-        std::time_t now = std::time(nullptr);
-        if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
-            cleanup_idle_connections(epfd);
-            last_cleanup_time_ = now;
-        }
-
-        for (int i = 0; i < n; ++i) {
-            int fd = events[i].data.fd;
-
-            // 处理新连接
-            if (fd == listen_fd) {
-                while (true) {
-                    int cfd = accept(listen_fd, nullptr, nullptr);
-                    if (cfd < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-                        break;
-                    }
-
-                    set_nonblocking(cfd);
-                    epoll_event cev{};
-                    cev.events = EPOLLIN | EPOLLET;
-                    cev.data.fd = cfd;
-                    epoll_ctl(epfd, EPOLL_CTL_ADD, cfd, &cev);
-
-                    conn_states_[cfd] = {std::time(nullptr)};
-                }
-            } else {
-                handle_client(epfd, fd); // 处理客户端请求
-            }
-        }
-    }
+    // 6. 启动事件循环（阻塞直到 stop() 被调用）
+    event_loop_->run(1000);
 
     close(listen_fd);
-    close(epfd);
 }
