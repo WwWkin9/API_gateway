@@ -35,6 +35,7 @@ add_executable(gateway
     # filter
     src/filter/logging_filter.cpp
     src/filter/request_id_filter.cpp
+    src/filter/rate_limit_filter.cpp    
 
     # utils
     src/utils/utils.cpp

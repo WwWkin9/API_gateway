@@ -10,6 +10,8 @@
 #include "gateway/proxy/proxy.h"
 #include "gateway/proxy/load_balancer.h"
 #include "gateway/proxy/circuit_breaker.h"
+#include "gateway/filter/rate_limit_filter.h"
+
 
 
 #include <memory>
@@ -36,6 +38,7 @@ private:
     GatewayConfig config_;
     std::unique_ptr<EventLoop> event_loop_;
     std::unique_ptr<ThreadPool> pool_;
+    RateLimitFilter* rate_limit_filter_ = nullptr;
 
     // TCP 服务器
     std::unique_ptr<TCPServer> tcp_server_;

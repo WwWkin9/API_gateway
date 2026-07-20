@@ -4,6 +4,7 @@
 #include "gateway/http/response.h"
 #include "gateway/proxy/backend_pool.h"
 #include "gateway/utils/utils.h"
+#include "gateway/filter/rate_limit_filter.h"
 
 #include <fcntl.h>
 #include <sys/epoll.h>
@@ -244,6 +245,11 @@ void Gateway::run() {
         if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
             cleanup_idle_connections();
             proxy_->cleanup_pool();
+
+            // 清理限流器中 5 分钟未活跃的桶
+            if (rate_limit_filter_) {
+                rate_limit_filter_->cleanup_expired_buckets(300);
+            }
             last_cleanup_time_ = now;
         }
     });
