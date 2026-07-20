@@ -1,5 +1,30 @@
+# IDE / editor
 /.cache
 /.claude
 /.vscode
+/.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# build output
 /build/
+/out/
+*.o
+*.obj
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
 compile_commands.json
+
+# core dumps
+core
+*.core
+
+# misc
+.trae/rules/
