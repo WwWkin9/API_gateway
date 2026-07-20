@@ -2,6 +2,7 @@
 
 #include "gateway/net/buffer.h"
 #include "gateway/net/event_loop.h"
+#include "gateway/http/parser.h"
 
 #include <functional>
 #include <string>
@@ -80,13 +81,11 @@ private:
 
     std::atomic<bool> keep_alive_{false};
 
-    // 尝试从 read_buf_ 中解析完整 HTTP 消息
-    // 返回 true 表示收到完整消息（已回调 message_callback_）
-    bool try_parse_message();
+    // 尝试从 read_buf_ 中增量解析 HTTP 消息
+    // 当解析出一条完整消息时回调 message_callback_
+    void try_parse_message();
 
-    // 尝试恢复完整 HTTP 报文边界
-    int pending_content_length_ = -1;
-    std::atomic<bool> header_parsed_{false};
+    HttpParser parser_;
 
     void close_internal();
 };
