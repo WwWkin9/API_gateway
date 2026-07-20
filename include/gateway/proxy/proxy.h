@@ -1,4 +1,29 @@
 #pragma once
 
-// 反向代理：将请求转发到后端服务
-// TODO: 实现反向代理
+#include "gateway/core/config.h"    // Backend
+
+#include <string>
+#include <sys/socket.h>
+
+// 反向代理：将原始 HTTP 请求转发到后端，返回后端响应
+//
+// 当前实现：每次请求新建 TCP 连接（短连接）
+// 后续升级：配合 BackendPool 实现连接复用
+class Proxy {
+public:
+    explicit Proxy(int backend_timeout_ms = 3000);
+    ~Proxy() = default;
+
+    std::string forward(const Backend& backend, const std::string& raw_request) const;
+
+    void set_timeout(int timeout_ms) { backend_timeout_ms_ = timeout_ms; }
+    int timeout() const { return backend_timeout_ms_; }
+
+private:
+    int backend_timeout_ms_;
+
+
+    static int nb_connect(int fd, const sockaddr* addr, socklen_t len, int timeout_ms);
+    static ssize_t nb_send_all(int fd, const char* data, size_t len, int timeout_ms);
+    static std::string make_502_response();
+};

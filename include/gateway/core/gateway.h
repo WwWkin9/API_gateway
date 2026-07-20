@@ -7,6 +7,7 @@
 #include "gateway/net/connection.h"
 #include "gateway/net/tcp_server.h"
 #include "gateway/core/router.h"
+#include "gateway/proxy/proxy.h"
 
 
 
@@ -43,6 +44,10 @@ private:
     // 路由表
     std::unique_ptr<Router> router_;
 
+    // 代理
+    std::unique_ptr<Proxy> proxy_;
+
+    // 过滤器链
     std::vector<std::unique_ptr<Filter>> filters_;
     std::time_t last_cleanup_time_ = 0;
 
@@ -50,6 +55,4 @@ private:
     void process_request(int fd, std::string raw);
 
     void cleanup_idle_connections();
-
-    std::string forward_to_backend(const Backend& backend, const std::string& raw_request) const;
 };
