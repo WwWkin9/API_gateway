@@ -20,6 +20,7 @@ add_executable(gateway
     src/net/tcp_server.cpp
     src/net/connection.cpp
     src/net/buffer.cpp
+    src/net/socket.cpp
 
     # http
     src/http/parser.cpp

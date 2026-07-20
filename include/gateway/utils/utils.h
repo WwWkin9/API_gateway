@@ -3,12 +3,6 @@
 #include <string>
 #include <optional>
 
-// 非阻塞设置
-int set_nonblocking(int fd);
-
-// 创建监听 socket
-int create_listen_socket(int port);
-
 // 安全解析十进制整数，失败返回 nullopt
 std::optional<int> parse_int_safe(const char* begin, const char* end);
 

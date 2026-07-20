@@ -1,5 +1,5 @@
 #include "gateway/proxy/proxy.h"
-#include "gateway/utils/utils.h"   // set_nonblocking
+#include "gateway/net/socket.h"
 
 #include <arpa/inet.h>
 #include <poll.h>

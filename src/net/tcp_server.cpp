@@ -1,5 +1,5 @@
 #include "gateway/net/tcp_server.h"
-#include "gateway/utils/utils.h"
+#include "gateway/net/socket.h"
 #include "gateway/logger/logger.h"
 
 #include <arpa/inet.h>
