@@ -2,6 +2,7 @@
 
 #include "gateway/http/request.h"
 #include "gateway/http/response.h"
+#include "gateway/proxy/backend_pool.h"
 #include "gateway/utils/utils.h"
 
 #include <fcntl.h>
@@ -18,6 +19,11 @@
 Gateway::Gateway(const GatewayConfig& config) : config_(config) {
     router_ = std::make_unique<Router>(config.routes);
     proxy_ = std::make_unique<Proxy>(config.backend_timeout_ms);
+
+    // 创建后端连接池并注入 Proxy
+    auto pool = std::make_shared<BackendPool>(config.pool_max_idle_per_host,
+                                              config.pool_idle_timeout_sec);
+    proxy_->set_pool(std::move(pool));
 }
 
 void Gateway::add_filter(std::unique_ptr<Filter> filter) {
@@ -131,6 +137,19 @@ void Gateway::process_request(int fd, std::string raw) {
     }
 }
 
+void Gateway::cleanup_idle_connections() {
+    std::time_t now = std::time(nullptr);
+    auto it = connections_.begin();
+    while (it != connections_.end()) {
+        if (now - it->second->last_active_time() > config_.keep_alive_timeout_sec) {
+            it->second->force_close();
+            it = connections_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void Gateway::run() {
     // ---- 1. 初始化事件循环 ----
     try {
@@ -181,6 +200,7 @@ void Gateway::run() {
         std::time_t now = std::time(nullptr);
         if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
             cleanup_idle_connections();
+            proxy_->cleanup_pool();
             last_cleanup_time_ = now;
         }
     });

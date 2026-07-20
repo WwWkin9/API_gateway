@@ -29,6 +29,7 @@ add_executable(gateway
     src/proxy/proxy.cpp
     src/proxy/backend_pool.cpp
     src/proxy/load_balancer.cpp
+    src/proxy/backend.cpp
 
     # filter
     src/filter/logging_filter.cpp

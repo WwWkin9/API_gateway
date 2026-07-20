@@ -67,9 +67,18 @@ std::string Proxy::make_502_response() {
     return resp;
 }
 
-// ============== 转发请求 ==============
+// ============== 转发请求（调度入口）==============
 
 std::string Proxy::forward(const Backend& backend, const std::string& raw_request) const {
+    if (pool_) {
+        return forward_pooled(backend, raw_request);
+    }
+    return forward_direct(backend, raw_request);
+}
+
+// ============== 直接转发（短连接）==============
+
+std::string Proxy::forward_direct(const Backend& backend, const std::string& raw_request) const {
     // 1. 创建 socket
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return make_502_response();
@@ -125,4 +134,31 @@ std::string Proxy::forward(const Backend& backend, const std::string& raw_reques
     }
     ::close(fd);
     return resp.empty() ? make_502_response() : resp;
+}
+
+// ============== 连接池转发（连接复用）==============
+
+std::string Proxy::forward_pooled(const Backend& backend, const std::string& raw_request) const {
+    // 1. 从连接池获取连接
+    auto conn = pool_->acquire(backend, backend_timeout_ms_);
+    if (!conn) {
+        return make_502_response();
+    }
+
+    // 2. 发送请求
+    if (!conn->send_all(raw_request.data(), raw_request.size(), backend_timeout_ms_)) {
+        pool_->evict(backend, std::move(conn));
+        return make_502_response();
+    }
+
+    // 3. 读取响应
+    std::string resp = conn->recv_all(backend_timeout_ms_);
+    if (resp.empty()) {
+        pool_->evict(backend, std::move(conn));
+        return make_502_response();
+    }
+
+    // 4. 归还连接到池中
+    pool_->release(backend, std::move(conn));
+    return resp;
 }

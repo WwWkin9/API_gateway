@@ -1,4 +1,54 @@
 #pragma once
 
-// 后端连接池：管理到后端服务的连接池
-// TODO: 实现后端连接池
+#include "gateway/core/config.h"         // Backend
+#include "gateway/proxy/backend.h"       // BackendConnection
+
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <unordered_map>
+#include <ctime>
+
+// 后端连接池：管理到各后端的 TCP 连接
+//
+// 线程安全：acquire/release/evict 可能从线程池多线程调用
+//         cleanup_idle 从主线程调用
+
+class BackendPool {
+public:
+    BackendPool(size_t max_idle_per_host = 10, int idle_timeout_sec = 60);
+    
+    BackendPool(const BackendPool&) = delete;
+    BackendPool& operator=(const BackendPool&) = delete;
+    
+    // 获取一个到后端的连接（优先复用空闲连接，否则新建）
+    // 返回值可能为 nullptr（连接失败）
+    std::shared_ptr<BackendConnection> acquire(const Backend& backend, int connect_timeout_ms);
+
+    // 归还连接到池中（连接健康时调用）
+    void release(const Backend& backend, std::shared_ptr<BackendConnection> conn);
+
+    // 驱逐异常连接（调用方判定连接不可用时调用，不会放回池中）
+    void evict(const Backend& backend, std::shared_ptr<BackendConnection> conn);
+
+    // 清理所有后端中超过 idle_timeout_sec 的空闲连接
+    void cleanup_idle();
+
+    // ---- 统计 ----
+    size_t idle_count(const Backend& backend) const;
+    size_t total_idle() const;
+private:
+    static std::string make_key(const std::string& host, int port);
+    static std::string make_key(const Backend& backend);
+
+    struct PoolEntry {
+        std::queue<std::shared_ptr<BackendConnection>> idle;
+        size_t active_count = 0; // 当前活动连接数
+    };
+
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, PoolEntry> pools_;
+    size_t max_idle_per_host_; // 最大空闲连接数
+    int idle_timeout_sec_; // 空闲超时时间，单位秒
+};
