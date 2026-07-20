@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <ctime>
+#include <memory>
 
 // 连接：封装客户端连接的读写操作、HTTP 消息边界识别、生命周期管理
 //
@@ -14,19 +15,24 @@
 //   Reading ──(收到完整消息)──> Processing ──(send 被调用)──> Writing
 //                                                                │
 //                                           ┌─────────────────────┘
-//                                           │ (keep-alive → 回到 Reading)
-//                                           │ (!keep-alive → Closed)
+//                                           │ (keep-alive → Reading)
+//                                           │ (!keep-alive → Closing → Closed)
 //                                           └─────────────────────┘
+//
+// 线程模型：on_read/on_write/send_internal/close_internal 只在 EventLoop 线程执行；
+// 其他线程调用 send()/force_close() 时通过 EventLoop::defer() 转交，
+// 并捕获 shared_from_this() 防止连接在任务执行前被销毁。
 //
 // 最大请求大小：64KB
 const int kMaxRequestSize = 65536;
 
-class Connection {
+class Connection : public std::enable_shared_from_this<Connection> {
 public:
     enum class State {
         Reading,
         Processing,
         Writing,
+        Closing,  // 优雅关闭：已 shutdown(SHUT_WR)，等待客户端 EOF
         Closed,
     };
 
@@ -86,6 +92,9 @@ private:
     void try_parse_message();
 
     HttpParser parser_;
+
+    // 实际发送逻辑（仅事件循环线程执行）
+    void send_internal(const std::string& data, bool keep_alive);
 
     void close_internal();
 };

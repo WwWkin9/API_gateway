@@ -4,7 +4,6 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
-#include <queue>
 #include <vector>
 
 // 定时器：基于时间堆的高效定时任务管理
@@ -65,8 +64,8 @@ private:
     };
 
     mutable std::mutex mutex_;
-    std::priority_queue<TimerEntry,
-                        std::vector<TimerEntry>,
-                        std::greater<TimerEntry>> heap_;
+    // 用 vector + push_heap/pop_heap 替代 std::priority_queue，
+    // 避免 reinterpret_cast 访问底层容器的未定义行为
+    std::vector<TimerEntry> heap_;
     std::atomic<uint64_t> next_id_{1};
 };

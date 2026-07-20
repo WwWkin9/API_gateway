@@ -5,6 +5,7 @@
 #include <vector>
 #include <unordered_map>
 #include <atomic>
+#include <mutex>
 
 // 前向声明
 class Timer;
@@ -14,6 +15,7 @@ class Timer;
 class EventLoop {
 public:
     using Callback = std::function<void(int fd, uint32_t events)>;
+    using Task = std::function<void()>;
     static constexpr int kDefaultMaxEvents = EPOLL_MAX_EVENTS;
     explicit EventLoop(int max_events = kDefaultMaxEvents);
     ~EventLoop();
@@ -22,6 +24,7 @@ public:
     EventLoop(const EventLoop&) = delete;
     EventLoop(EventLoop&&) = delete;
 
+    // 以下 add/mod/del 必须在事件循环线程调用
     void add_fd(int fd, uint32_t events);
     void mod_fd(int fd, uint32_t events);
     void del_fd(int fd);
@@ -31,6 +34,9 @@ public:
 
     void set_callback(int fd, Callback cb);
     void remove_callback(int fd);
+
+    // 跨线程安全：把任务排队到事件循环线程执行（通过 eventfd 唤醒 epoll_wait）
+    void defer(Task task);
 
     // 设置定时器：epoll_wait 会根据最近的定时器到期时间动态调整超时值
     void set_timer(Timer* timer);
@@ -52,6 +58,14 @@ private:
 
     Timer* timer_ = nullptr;
 
+    // defer 任务队列（eventfd 用于唤醒阻塞在 epoll_wait 的循环线程）
+    int wakeup_fd_ = -1;
+    std::mutex defer_mutex_;
+    std::vector<Task> deferred_tasks_;
+
     // 计算本次 epoll_wait 的有效超时（结合定时器到期时间）
     int64_t compute_timeout_ms(int default_ms) const;
+
+    // 执行所有已排队的 defer 任务
+    void run_deferred_tasks();
 };

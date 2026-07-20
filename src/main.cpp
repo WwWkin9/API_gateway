@@ -6,7 +6,12 @@
 #include "gateway/filter/rate_limit_filter.h"
 #include "gateway/logger/logger.h"
 
+#include <csignal>
+
 int main(int argc, char* argv[]) {
+    // 忽略 SIGPIPE，防止向已关闭的 socket 写入时进程崩溃
+    signal(SIGPIPE, SIG_IGN);
+
     // 初始化日志
     Logger::instance().set_level(LogLevel::INFO);
 

@@ -41,6 +41,7 @@ private:
 
     // 连接管理（shared_ptr：被 EventLoop 的 lambda 捕获）
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
+    mutable std::mutex connections_mutex_;
 
     // 路由表
     std::unique_ptr<Router> router_;

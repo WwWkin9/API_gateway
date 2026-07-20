@@ -73,7 +73,7 @@ bool BackendConnection::send_all(const char* data, size_t len, int timeout_ms) {
         int ret = ::poll(&pfd, 1, timeout_ms);
         if (ret <= 0) return false; 
 
-        ssize_t n = ::send(fd_, data + sent, len - sent, 0);
+        ssize_t n = ::send(fd_, data + sent, len - sent, MSG_NOSIGNAL);
         if (n > 0) {
             sent += static_cast<size_t>(n);
         } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -91,12 +91,14 @@ std::string BackendConnection::recv_all(int timeout_ms) {
     std::string resp;
     char buf[4096];
     bool got_data = false;
-    int tmo = timeout_ms;
+    bool eof = false;
 
     while (true){
         pollfd pfd{};
         pfd.fd = fd_;
         pfd.events = POLLIN;
+        // 首次读取使用完整超时，后续读取使用更短超时
+        int tmo = got_data ? (timeout_ms > 200 ? 200 : timeout_ms / 2) : timeout_ms;
         int ret = ::poll(&pfd, 1, tmo);
         if (ret < 0) break;
         if (ret == 0) break;
@@ -105,6 +107,9 @@ std::string BackendConnection::recv_all(int timeout_ms) {
         if (n > 0) {
             resp.append(buf, static_cast<size_t>(n));
             got_data = true;
+        } else if (n == 0) {
+            eof = true;  // 对端正常关闭
+            break;
         } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         } else {
@@ -115,7 +120,12 @@ std::string BackendConnection::recv_all(int timeout_ms) {
         close();
         return {};
     }
-    touch();
+    // 后端连接已关闭（Connection: close），标记 fd 为无效防止归还到池中
+    if (eof) {
+        close();
+    } else {
+        touch();
+    }
     return resp;
 }
 

@@ -41,9 +41,11 @@ void Gateway::add_filter(std::unique_ptr<Filter> filter) {
 }
 
 void Gateway::process_request(int fd, std::string raw) {
+    LOG_DEBUG("process_request fd=%d raw_len=%zu", fd, raw.size());
     // 1. 解析请求
     HttpRequest req;
     if (!parse_http_request(raw, req)) {
+        LOG_DEBUG("process_request fd=%d parse failed", fd);
         send_error_and_close(fd, make_400(false).to_string());
         return;
     }
@@ -51,9 +53,18 @@ void Gateway::process_request(int fd, std::string raw) {
     // 2. 检查内部端点
     std::string internal_resp;
     if (handle_internal_endpoint(req.path, internal_resp)) {
-        auto it = connections_.find(fd);
-        if (it != connections_.end()) {
-            it->second->send(internal_resp, false);
+        LOG_DEBUG("process_request fd=%d internal endpoint %s", fd, req.path.c_str());
+        std::shared_ptr<Connection> conn;
+        {
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            auto it = connections_.find(fd);
+            if (it != connections_.end()) conn = it->second;
+        }
+        if (conn) {
+            LOG_DEBUG("process_request fd=%d sending internal resp len=%zu", fd, internal_resp.size());
+            conn->send(internal_resp, false);
+        } else {
+            LOG_WARN("process_request fd=%d connection not found for internal endpoint", fd);
         }
         return;
     }
@@ -169,14 +180,26 @@ void Gateway::process_request(int fd, std::string raw) {
         }
     }
 
-    // 9. 通过 Connection 发送
-    auto conn = connections_.find(fd);
-    if (conn != connections_.end()) {
+    // 9. 通过 Connection 发送（锁内取 shared_ptr，锁外 send，防止锁竞争 + 死锁）
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(fd);
+        if (it != connections_.end()) conn = it->second;
+    }
+    if (conn) {
         bool ka = request_keep_alive(req);
-        conn->second->send(out, ka);
+        // 如果后端响应要求关闭连接，则不应保持客户端连接
+        if (!ka) {
+            // already false
+        } else if (out.find("\r\nConnection: close") != std::string::npos ||
+                   out.find("\r\nconnection: close") != std::string::npos) {
+            ka = false;
+        }
+        conn->send(out, ka);
     } else {
         // 连接已不在（不应发生），直接写 + 关闭
-        send(fd, out.c_str(), out.size(), 0);
+        send(fd, out.c_str(), out.size(), MSG_NOSIGNAL);
         close(fd);
     }
 }
@@ -204,17 +227,23 @@ CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
 }
 
 void Gateway::send_error_and_close(int fd, const std::string& resp) {
-    auto it = connections_.find(fd);
-    if (it != connections_.end()) {
-        it->second->send(resp, false);  // keep_alive = false，发送后关闭
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(fd);
+        if (it != connections_.end()) conn = it->second;
+    }
+    if (conn) {
+        conn->send(resp, false);
     } else {
-        ::send(fd, resp.c_str(), resp.size(), 0);
+        ::send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
         ::close(fd);
     }
 }
 
 void Gateway::cleanup_idle_connections() {
     std::time_t now = std::time(nullptr);
+    std::lock_guard<std::mutex> lock(connections_mutex_);
     auto it = connections_.begin();
     while (it != connections_.end()) {
         if (now - it->second->last_active_time() > config_.keep_alive_timeout_sec) {
@@ -332,9 +361,10 @@ void Gateway::run() {
             });
         });
         conn->set_close_callback([this](int fd) {
+            std::lock_guard<std::mutex> lock(connections_mutex_);
             connections_.erase(fd);
         });
-        event_loop_->add_fd(cfd, EPOLLIN | EPOLLOUT);
+        event_loop_->add_fd(cfd, EPOLLIN);
         event_loop_->set_callback(cfd, [this, conn](int /*fd*/, uint32_t events) mutable{
            if (events & EPOLLIN) {
                conn->on_read();
@@ -346,7 +376,10 @@ void Gateway::run() {
                conn->force_close();
            }
         });
-        connections_[cfd] = conn;
+        {
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            connections_[cfd] = conn;
+        }
     });
     tcp_server_->start();
 

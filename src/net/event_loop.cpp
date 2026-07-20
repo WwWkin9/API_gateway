@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdexcept>
+#include <sys/eventfd.h>
 
 EventLoop::EventLoop(int max_events) : epfd_(epoll_create1(0)), running_(false), max_events_(max_events) {
     if (epfd_ < 0) {
@@ -12,9 +13,25 @@ EventLoop::EventLoop(int max_events) : epfd_(epoll_create1(0)), running_(false),
     }
     // 预分配事件队列内存
     events_.resize(max_events_);
+
+    // eventfd：worker 线程通过 defer() 提交任务后唤醒 epoll_wait
+    wakeup_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (wakeup_fd_ < 0) {
+        close(epfd_);
+        throw std::runtime_error("failed to create eventfd");
+    }
+    add_fd(wakeup_fd_, EPOLLIN);
+    set_callback(wakeup_fd_, [this](int fd, uint32_t) {
+        uint64_t val;
+        while (::read(fd, &val, sizeof(val)) == sizeof(val)) {}
+        run_deferred_tasks();
+    });
 }
 
 EventLoop::~EventLoop() {
+    if (wakeup_fd_ >= 0) {
+        close(wakeup_fd_);
+    }
     if (epfd_ >= 0) {
         close(epfd_);
     }
@@ -69,6 +86,35 @@ void EventLoop::set_timer(Timer* timer) {
 
 void EventLoop::stop() {
     running_.store(false);
+    // 唤醒可能阻塞在 epoll_wait 的循环线程
+    if (wakeup_fd_ >= 0) {
+        uint64_t val = 1;
+        ssize_t n = ::write(wakeup_fd_, &val, sizeof(val));
+        (void)n;
+    }
+}
+
+// 跨线程提交任务：排队后通过 eventfd 唤醒事件循环线程执行
+void EventLoop::defer(Task task) {
+    {
+        std::lock_guard<std::mutex> lock(defer_mutex_);
+        deferred_tasks_.push_back(std::move(task));
+    }
+    uint64_t val = 1;
+    ssize_t n = ::write(wakeup_fd_, &val, sizeof(val));
+    (void)n;  // eventfd 满时已有挂起的唤醒，无需重复写
+}
+
+// 在事件循环线程批量执行 defer 任务（锁内交换，锁外执行，避免回调中 defer 死锁）
+void EventLoop::run_deferred_tasks() {
+    std::vector<Task> tasks;
+    {
+        std::lock_guard<std::mutex> lock(defer_mutex_);
+        tasks.swap(deferred_tasks_);
+    }
+    for (auto& task : tasks) {
+        task();
+    }
 }
 
 int64_t EventLoop::compute_timeout_ms(int default_ms) const {
@@ -108,7 +154,9 @@ void EventLoop::run(int timeout_ms) {
 
             auto it = callbacks_.find(fd);
             if (it != callbacks_.end()) {
-                it->second(fd, events);
+                // 先复制回调到栈上再执行，防止回调中调用 del_fd 销毁自身导致 use-after-free
+                auto cb = it->second;
+                cb(fd, events);
             }
         }
 

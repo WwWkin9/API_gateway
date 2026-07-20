@@ -44,7 +44,7 @@ ssize_t Proxy::nb_send_all(int fd, const char* data, size_t len, int timeout_ms)
         int ret = poll(&pfd, 1, timeout_ms);
         if (ret <= 0) return -1;
 
-        ssize_t n = ::send(fd, data + sent, len - sent, 0);
+        ssize_t n = ::send(fd, data + sent, len - sent, MSG_NOSIGNAL);
         if (n > 0) {
             sent += static_cast<size_t>(n);
         } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {

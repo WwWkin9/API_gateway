@@ -69,6 +69,9 @@ public:
 
     void reset();
 
+    // 获取 partial_ 中剩余未处理的数据大小（用于判断是否需要立即处理管道请求）
+    size_t pending_size() const { return partial_.size(); }
+
     void set_max_size(int max_size) { max_size_ = max_size; }
 
 private:
@@ -98,4 +101,5 @@ private:
     bool check_size_limit();
     void consume_partial(size_t n);
     bool extract_line(std::string_view& line);
+    void consume_line(const std::string_view& line);
 };

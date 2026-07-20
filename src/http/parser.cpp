@@ -1,5 +1,6 @@
 #include "gateway/http/parser.h"
 #include "gateway/utils/utils.h"  // parse_int_safe
+#include "gateway/logger/logger.h"
 
 #include <algorithm>
 #include <cctype>
@@ -134,7 +135,7 @@ void HttpParser::reset() {
     state_ = State::RequestLine;
     request_ = HttpRequest{};
     raw_.clear();
-    partial_.clear();
+    // 注意：不清理 partial_，保留管道请求的剩余数据
     is_chunked_ = false;
     content_length_ = -1;
     body_read_ = 0;
@@ -170,8 +171,12 @@ bool HttpParser::extract_line(std::string_view& line) {
 
     size_t line_len = cr - data;
     line = std::string_view(data, line_len);
-    consume_partial(line_len + 2);
+    // 不在此处 consume，由调用方在 line 使用完毕后再消费
     return true;
+}
+
+void HttpParser::consume_line(const std::string_view& line) {
+    consume_partial(line.size() + 2);
 }
 
 // ============== 主入口 ==============
@@ -180,37 +185,55 @@ size_t HttpParser::parse(const char* data, size_t len) {
     if (state_ == State::Error || state_ == State::Complete) return 0;
 
     size_t old_pending = partial_.size();
+    std::string data_preview;
+    if (data && len > 0) {
+        data_preview.assign(data, std::min(len, (size_t)200));
+    }
+    LOG_DEBUG("HttpParser::parse len=%zu old_pending=%zu preview=[%s]", len, old_pending, data_preview.c_str());
+    size_t old_raw_size = raw_.size();
     partial_.append(data, len);
-    size_t raw_before = raw_.size();
 
     process();
 
-    // process 通过 consume_partial 把已消费字节追加到 raw_
-    size_t consumed_total = raw_.size() - raw_before;
-    // 外部 read_buf 只需要消费本次 data 中被处理的字节
-    size_t consumed_from_new = (consumed_total > old_pending) ? (consumed_total - old_pending) : 0;
+    LOG_DEBUG("HttpParser::parse done state=%d complete=%d error=%d raw=%zu",
+              (int)state_, complete(), has_error(), raw_.size());
 
     if (!check_size_limit()) return 0;
-    return consumed_from_new;
+
+    // 有输入数据时：所有数据已复制到 partial_，返回 len
+    if (len > 0) return len;
+
+    // 无输入数据时（处理 partial_ 中残留的管道数据）：返回实际解析进度
+    // 返回 0 表示无法继续解析，调用方应等待更多数据而非循环重试
+    size_t consumed = raw_.size() - old_raw_size;
+    return consumed;
 }
 
 // ============== 调度 ==============
 
 void HttpParser::process() {
     while (state_ != State::Complete && state_ != State::Error) {
+        LOG_DEBUG("process loop state=%d partial=%zu", (int)state_, partial_.size());
         switch (state_) {
-        case State::RequestLine:  process_request_line(); break;
+        case State::RequestLine:
+            process_request_line();
+            if (state_ == State::Headers) continue;  // 继续处理 headers
+            break;
         case State::Headers:      process_headers();      break;
         case State::Body:         process_body();         break;
         case State::ChunkedBody:  process_chunked();      break;
         default: return;
         }
         // 行级解析：部分行则退出等更多数据
-        if (state_ == State::RequestLine || state_ == State::Headers) return;
+        if (state_ == State::RequestLine || state_ == State::Headers) {
+            LOG_DEBUG("process exit early state=%d partial=%zu", (int)state_, partial_.size());
+            return;
+        }
         // Body 解析：partial_ 为空则等更多数据
         if ((state_ == State::Body || state_ == State::ChunkedBody) &&
             partial_.empty() && state_ != State::Complete) return;
     }
+    LOG_DEBUG("process exit state=%d", (int)state_);
 }
 
 // ============== RequestLine ==============
@@ -218,34 +241,56 @@ void HttpParser::process() {
 void HttpParser::process_request_line() {
     std::string_view line;
     if (!extract_line(line)) return;
-    if (line.empty()) return;  // 跳过前导空行
+    if (line.empty()) {
+        consume_line(line);  // 跳过前导空行
+        return;
+    }
 
     if (!parse_request_line(line, request_)) {
         state_ = State::Error;
         return;
     }
+    consume_line(line);
     state_ = State::Headers;
 }
 
 // ============== Headers ==============
 
 void HttpParser::process_headers() {
+    LOG_DEBUG("process_headers start partial=%zu", partial_.size());
     while (true) {
-        if (partial_.size() < 2) return;
+        if (partial_.size() < 2) {
+            LOG_DEBUG("process_headers partial<2 exit");
+            return;
+        }
 
         // 空行 \r\n 表示头部结束
         if (partial_[0] == '\r' && partial_[1] == '\n') {
+            LOG_DEBUG("process_headers found header end");
             consume_partial(2);
             finalize_headers();
             return;
         }
 
         std::string_view line;
-        if (!extract_line(line)) return;
-        if (line.empty()) continue;
+        if (!extract_line(line)) {
+            LOG_DEBUG("process_headers extract_line false");
+            return;
+        }
+        if (line.empty()) {
+            LOG_DEBUG("process_headers empty line");
+            consume_line(line);
+            continue;
+        }
+
+        LOG_DEBUG("process_headers line=[%.*s]", (int)line.size(), line.data());
 
         size_t colon = line.find(':');
-        if (colon == std::string_view::npos) continue;  // 宽松跳过无效行
+        if (colon == std::string_view::npos) {
+            LOG_DEBUG("process_headers no colon, skip");
+            consume_line(line);  // 跳过无效行
+            continue;
+        }
 
         std::string key(line.data(), colon);
         to_lower_inplace(key);
@@ -253,6 +298,9 @@ void HttpParser::process_headers() {
         size_t vs = colon + 1;
         while (vs < line.size() && (line[vs] == ' ' || line[vs] == '\t')) ++vs;
         request_.headers[std::move(key)].assign(line.data() + vs, line.size() - vs);
+
+        LOG_DEBUG("process_headers parsed header consumed");
+        consume_line(line);
     }
 }
 
