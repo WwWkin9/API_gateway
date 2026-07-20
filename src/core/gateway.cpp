@@ -12,6 +12,7 @@
 
 #include <ctime>
 #include <iostream>
+#include <sstream>
 #include <string.h>
 
 
@@ -32,46 +33,61 @@ void Gateway::add_filter(std::unique_ptr<Filter> filter) {
 }
 
 void Gateway::process_request(int fd, std::string raw) {
+    // 1. 解析请求
     HttpRequest req;
     if (!parse_http_request(raw, req)) {
-        auto resp = make_400(false).to_string();
-        send(fd, resp.c_str(), resp.size(), 0);
-        auto it = connections_.find(fd);
-        if (it != connections_.end()) {
-            it->second->force_close();
-        }
+        send_error_and_close(fd, make_400(false).to_string());
         return;
     }
 
-    // ---- 过滤器链：请求阶段 ----
+    // 2. 过滤器链：请求阶段
     FilterContext fctx;
     fctx.req = &req;
     for (auto& f : filters_) {
         if (!f->on_request(fctx)) {
-            auto resp = make_400(false).to_string();
-            send(fd, resp.c_str(), resp.size(), 0);
-
-            auto it = connections_.find(fd);
-            if (it != connections_.end()) {
-                it->second->force_close();
-            }
+            send_error_and_close(fd, make_400(false).to_string());
             return;
         }
     }
 
-    // ---- 路由 + 转发 ----
-    std::string out;
+    // 3. 路由 + 负载均衡
     auto backends = router_->match(req.path);
     if (!backends.has_value()) {
-        out = make_404(false).to_string();
-    } else {
-        Backend target = load_balancer_->select(backends.value());
-        load_balancer_->on_connect(target);
-        out = proxy_->forward(target, raw);
-        load_balancer_->on_disconnect(target);
+        send_error_and_close(fd, make_404(false).to_string());
+        return;
+    }
+    Backend target = load_balancer_->select(backends.value());
+
+    // 4. 断路器检查
+    auto& cb = get_circuit_breaker(target);
+    if (!cb.allow_request()) {
+        // 断路器开路，快速失败
+        std::string resp503 =
+            "HTTP/1.1 503 Service Unavailable\r\n"
+            "Content-Length: 19\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "Service Unavailable";
+        send_error_and_close(fd, resp503);
+        return;
     }
 
-    // 如果后端没写 Connection 头，简单补上
+    // 5. 转发到后端
+    load_balancer_->on_connect(target);
+    std::string raw_resp = proxy_->forward(target, raw);
+    load_balancer_->on_disconnect(target);
+
+    // 6. 断路器结果上报
+    bool success = !raw_resp.empty() && raw_resp.find("HTTP/1.1 5") != 0;
+    if (success) {
+        cb.on_success();
+    } else {
+        cb.on_failure();
+    }
+
+    std::string out = raw_resp;
+
+    // 7. 如果后端没写 Connection 头，简单补上
     if (out.find("Connection:") == std::string::npos) {
         size_t pos = out.find("\r\n\r\n");
         if (pos != std::string::npos) {
@@ -81,7 +97,7 @@ void Gateway::process_request(int fd, std::string raw) {
         }
     }
 
-    // ---- 过滤器链：响应阶段 ----
+    // 8. 过滤器链：响应阶段
     {
         HttpResponse tmp_resp;
         // 安全解析后端返回的状态码
@@ -100,7 +116,7 @@ void Gateway::process_request(int fd, std::string raw) {
             f->on_response(fctx);
         }
 
-        // 优化：一次性找到 \r\n\r\n 分隔点，收集新增头，在分隔点前 insert
+        // 一次性找到 \r\n\r\n 分隔点，收集新增头，在分隔点前 insert
         if (!tmp_resp.headers.empty()) {
             size_t hdr_end = out.find("\r\n\r\n");
             if (hdr_end != std::string::npos) {
@@ -122,16 +138,45 @@ void Gateway::process_request(int fd, std::string raw) {
         }
     }
 
-    // ---- 通过 Connection 发送 ----
+    // 9. 通过 Connection 发送
     auto conn = connections_.find(fd);
     if (conn != connections_.end()) {
-        // 判断是否 keep-alive 连接
         bool ka = request_keep_alive(req);
         conn->second->send(out, ka);
     } else {
         // 连接已不在（不应发生），直接写 + 关闭
         send(fd, out.c_str(), out.size(), 0);
         close(fd);
+    }
+}
+
+CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
+    std::ostringstream oss;
+    oss << backend.host << ':' << backend.port;
+    std::string key = oss.str();
+
+    // 快速路径：不加锁先查找
+    {
+        auto it = circuit_breakers_.find(key);
+        if (it != circuit_breakers_.end()) {
+            return it->second;
+        }
+    }
+
+    // 慢速路径：加锁创建（try_emplace 就地构造，避免拷贝/移动）
+    std::lock_guard<std::mutex> lock(cb_mutex_);
+    return circuit_breakers_.try_emplace(
+        key, 5, config_.backend_timeout_ms * 2, 3
+    ).first->second;
+}
+
+void Gateway::send_error_and_close(int fd, const std::string& resp) {
+    auto it = connections_.find(fd);
+    if (it != connections_.end()) {
+        it->second->send(resp, false);  // keep_alive = false，发送后关闭
+    } else {
+        ::send(fd, resp.c_str(), resp.size(), 0);
+        ::close(fd);
     }
 }
 

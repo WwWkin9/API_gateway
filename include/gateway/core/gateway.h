@@ -9,10 +9,11 @@
 #include "gateway/core/router.h"
 #include "gateway/proxy/proxy.h"
 #include "gateway/proxy/load_balancer.h"
-
+#include "gateway/proxy/circuit_breaker.h"
 
 
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -51,6 +52,10 @@ private:
     // 负载均衡器
     std::unique_ptr<LoadBalancer> load_balancer_;
 
+    // 断路器（按后端 "host:port" 索引）
+    std::unordered_map<std::string, CircuitBreaker> circuit_breakers_;
+    mutable std::mutex cb_mutex_;
+
     // 过滤器链
     std::vector<std::unique_ptr<Filter>> filters_;
     std::time_t last_cleanup_time_ = 0;
@@ -59,4 +64,10 @@ private:
     void process_request(int fd, std::string raw);
 
     void cleanup_idle_connections();
+
+    // 获取或创建指定后端的断路器
+    CircuitBreaker& get_circuit_breaker(const Backend& backend);
+
+    // 发送错误响应并关闭连接
+    void send_error_and_close(int fd, const std::string& resp);
 };
