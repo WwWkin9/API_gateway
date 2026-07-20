@@ -4,6 +4,10 @@ project(cpp_gateway)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 发布优化：O3、LTO、CPU 原生指令集（构建服务器时可移除 -march=native）
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -flto=auto -ffat-lto-objects")
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+
 include_directories(include)
 
 add_executable(gateway

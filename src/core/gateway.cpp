@@ -115,13 +115,17 @@ void Gateway::process_request(int fd, std::string raw) {
 
     std::string out = raw_resp;
 
+    // 找到响应头尾分隔点，后续多次复用，避免重复扫描
+    size_t hdr_end = out.find("\r\n\r\n");
+
     // 7. 如果后端没写 Connection 头，简单补上
-    if (out.find("Connection:") == std::string::npos) {
-        size_t pos = out.find("\r\n\r\n");
-        if (pos != std::string::npos) {
-            std::string head = out.substr(0, pos);
-            std::string body = out.substr(pos + 4);
-            out = head + "\r\nConnection: close\r\n\r\n" + body;
+    if (hdr_end != std::string::npos) {
+        std::string_view head(out.data(), hdr_end + 2);  // 包含末尾 \r\n
+        bool has_conn = (::memmem(head.data(), head.size(), "\r\nConnection:", 13) != nullptr) ||
+                        (::memmem(head.data(), head.size(), "\r\nconnection:", 13) != nullptr);
+        if (!has_conn) {
+            out.insert(hdr_end, "\r\nConnection: close");
+            hdr_end += 21;  // 插入后新的头尾位置
         }
     }
 
@@ -144,24 +148,23 @@ void Gateway::process_request(int fd, std::string raw) {
             f->on_response(fctx);
         }
 
-        // 一次性找到 \r\n\r\n 分隔点，收集新增头，在分隔点前 insert
-        if (!tmp_resp.headers.empty()) {
-            size_t hdr_end = out.find("\r\n\r\n");
-            if (hdr_end != std::string::npos) {
-                std::string extra;
-                for (const auto& [k, v] : tmp_resp.headers) {
-                    // 只在响应中没有该头时才追加
-                    std::string tag = "\r\n" + k + ":";
-                    if (out.find(tag) == std::string::npos) {
-                        extra += "\r\n";
-                        extra += k;
-                        extra += ": ";
-                        extra += v;
-                    }
+        // 在已缓存的 hdr_end 前插入过滤器新增的响应头
+        if (!tmp_resp.headers.empty() && hdr_end != std::string::npos) {
+            std::string extra;
+            extra.reserve(tmp_resp.headers.size() * 32);
+            for (const auto& [k, v] : tmp_resp.headers) {
+                // 只在响应头区域中没有该头时才追加
+                std::string tag = "\r\n" + k + ":";
+                const void* hit = ::memmem(out.data(), hdr_end, tag.data(), tag.size());
+                if (!hit) {
+                    extra += "\r\n";
+                    extra += k;
+                    extra += ": ";
+                    extra += v;
                 }
-                if (!extra.empty()) {
-                    out.insert(hdr_end, extra);
-                }
+            }
+            if (!extra.empty()) {
+                out.insert(hdr_end, extra);
             }
         }
     }
@@ -179,9 +182,11 @@ void Gateway::process_request(int fd, std::string raw) {
 }
 
 CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
-    std::ostringstream oss;
-    oss << backend.host << ':' << backend.port;
-    std::string key = oss.str();
+    std::string key;
+    key.reserve(backend.host.size() + 12);
+    key += backend.host;
+    key += ':';
+    key += std::to_string(backend.port);
 
     // 快速路径：不加锁先查找
     {
@@ -194,7 +199,7 @@ CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
     // 慢速路径：加锁创建（try_emplace 就地构造，避免拷贝/移动）
     std::lock_guard<std::mutex> lock(cb_mutex_);
     return circuit_breakers_.try_emplace(
-        key, 5, config_.backend_timeout_ms * 2, 3
+        std::move(key), 5, config_.backend_timeout_ms * 2, 3
     ).first->second;
 }
 

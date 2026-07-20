@@ -6,33 +6,65 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 // ============== 工具 ==============
 
+static inline char ascii_to_lower(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : static_cast<char>(c);
+}
+
 static void to_lower_inplace(std::string& s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return std::tolower(c);
-    });
+    for (char& c : s) {
+        c = ascii_to_lower(static_cast<unsigned char>(c));
+    }
+}
+
+static bool str_iequal(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (ascii_to_lower(static_cast<unsigned char>(a[i])) !=
+            ascii_to_lower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // ============================================================
 // 静态工具函数
 // ============================================================
 
+static const char* header_find_icase(const char* data, size_t len,
+                                     std::string_view name) {
+    const char* p = data;
+    const char* end = data + len;
+    while (p < end) {
+        const char* line_end = static_cast<const char*>(::memmem(p, end - p, "\r\n", 2));
+        if (!line_end) line_end = end;
+
+        if (static_cast<size_t>(line_end - p) > name.size() &&
+            p[name.size()] == ':' &&
+            str_iequal(std::string_view(p, name.size()), name)) {
+            return p;
+        }
+        if (line_end == end) break;
+        p = line_end + 2;
+    }
+    return nullptr;
+}
+
 int parse_content_length(const char* header_data, size_t header_len) {
-    const char* cl_pos = static_cast<const char*>(
-        memmem(header_data, header_len, "Content-Length:", 15));
+    const char* cl_pos = header_find_icase(header_data, header_len, "Content-Length");
     if (!cl_pos) return -1;
 
-    cl_pos += 15;
-    while (cl_pos < header_data + header_len &&
-           (*cl_pos == ' ' || *cl_pos == '\t')) {
+    const char* header_end = header_data + header_len;
+    cl_pos += 15;  // "Content-Length:"
+    while (cl_pos < header_end && (*cl_pos == ' ' || *cl_pos == '\t')) {
         ++cl_pos;
     }
 
-    const char* header_end = header_data + header_len;
-    const char* cl_end = static_cast<const char*>(
-        memmem(cl_pos, header_end - cl_pos, "\r\n", 2));
+    const char* cl_end = static_cast<const char*>(::memmem(cl_pos, header_end - cl_pos, "\r\n", 2));
     if (!cl_end) cl_end = header_end;
 
     auto parsed = parse_int_safe(cl_pos, cl_end);
@@ -42,15 +74,15 @@ int parse_content_length(const char* header_data, size_t header_len) {
     return -1;
 }
 
-static bool parse_request_line(const std::string& line, HttpRequest& req) {
+static bool parse_request_line(std::string_view line, HttpRequest& req) {
     size_t pos1 = line.find(' ');
-    if (pos1 == std::string::npos) return false;
+    if (pos1 == std::string_view::npos) return false;
     size_t pos2 = line.find(' ', pos1 + 1);
-    if (pos2 == std::string::npos) return false;
+    if (pos2 == std::string_view::npos) return false;
 
-    req.method = line.substr(0, pos1);
-    req.path = line.substr(pos1 + 1, pos2 - pos1 - 1);
-    req.version = line.substr(pos2 + 1);
+    req.method.assign(line.data(), pos1);
+    req.path.assign(line.data() + pos1 + 1, pos2 - pos1 - 1);
+    req.version.assign(line.data() + pos2 + 1, line.size() - pos2 - 1);
     return !req.method.empty() && !req.path.empty() && !req.version.empty();
 }
 
@@ -58,34 +90,33 @@ bool parse_http_request(const std::string& raw, HttpRequest& req) {
     size_t header_end = raw.find("\r\n\r\n");
     if (header_end == std::string::npos) return false;
 
-    req.body = raw.substr(header_end + 4);
-    size_t pos = 0, line_start = 0;
+    req.body.assign(raw.data() + header_end + 4, raw.size() - header_end - 4);
 
-    while (pos <= header_end) {
-        if (raw[pos] == '\r' && pos + 1 <= header_end && raw[pos + 1] == '\n') {
-            size_t line_len = pos - line_start;
-            if (line_len > 0) {
-                std::string line = raw.substr(line_start, line_len);
-                if (req.method.empty()) {
-                    if (!parse_request_line(line, req)) return false;
-                } else {
-                    size_t colon_pos = line.find(':');
-                    if (colon_pos != std::string::npos) {
-                        std::string key = line.substr(0, colon_pos);
-                        to_lower_inplace(key);
-                        size_t value_start = colon_pos + 1;
-                        while (value_start < line.size() &&
-                               (line[value_start] == ' ' || line[value_start] == '\t'))
-                            ++value_start;
-                        req.headers[key] = line.substr(value_start);
+    size_t line_start = 0;
+    while (line_start < header_end) {
+        size_t line_end = raw.find("\r\n", line_start);
+        if (line_end == std::string::npos || line_end > header_end) break;
+
+        std::string_view line(raw.data() + line_start, line_end - line_start);
+        if (!line.empty()) {
+            if (req.method.empty()) {
+                if (!parse_request_line(line, req)) return false;
+            } else {
+                size_t colon_pos = line.find(':');
+                if (colon_pos != std::string_view::npos) {
+                    std::string key(line.data(), colon_pos);
+                    to_lower_inplace(key);
+                    size_t value_start = colon_pos + 1;
+                    while (value_start < line.size() &&
+                           (line[value_start] == ' ' || line[value_start] == '\t')) {
+                        ++value_start;
                     }
+                    req.headers[std::move(key)].assign(
+                        line.data() + value_start, line.size() - value_start);
                 }
             }
-            pos += 2;
-            line_start = pos;
-        } else {
-            ++pos;
         }
+        line_start = line_end + 2;
     }
     return !req.method.empty() && !req.path.empty() && !req.version.empty();
 }
@@ -120,11 +151,26 @@ bool HttpParser::check_size_limit() {
     return true;
 }
 
-bool HttpParser::extract_line(std::string& line) {
-    size_t pos = partial_.find("\r\n");
-    if (pos == std::string::npos) return false;
-    line = partial_.substr(0, pos);
-    partial_.erase(0, pos + 2);
+// 从 partial_ 开头消费 n 字节，追加到 raw_，并把剩余数据前移
+void HttpParser::consume_partial(size_t n) {
+    if (n == 0) return;
+    raw_.append(partial_.data(), n);
+    size_t remaining = partial_.size() - n;
+    if (remaining > 0) {
+        std::memmove(partial_.data(), partial_.data() + n, remaining);
+    }
+    partial_.resize(remaining);
+}
+
+bool HttpParser::extract_line(std::string_view& line) {
+    const char* data = partial_.data();
+    size_t len = partial_.size();
+    const char* cr = static_cast<const char*>(::memchr(data, '\r', len));
+    if (!cr || cr + 1 >= data + len || cr[1] != '\n') return false;
+
+    size_t line_len = cr - data;
+    line = std::string_view(data, line_len);
+    consume_partial(line_len + 2);
     return true;
 }
 
@@ -133,19 +179,19 @@ bool HttpParser::extract_line(std::string& line) {
 size_t HttpParser::parse(const char* data, size_t len) {
     if (state_ == State::Error || state_ == State::Complete) return 0;
 
-    // 全部追加到 partial_，由内部状态机消费
-    size_t partial_before = partial_.size();
+    size_t old_pending = partial_.size();
     partial_.append(data, len);
-    process();
-    size_t partial_after = partial_.size();
-    size_t consumed = partial_before + len - partial_after;
+    size_t raw_before = raw_.size();
 
-    // 将消耗的字节追加到 raw_
-    raw_.append(data, consumed);
+    process();
+
+    // process 通过 consume_partial 把已消费字节追加到 raw_
+    size_t consumed_total = raw_.size() - raw_before;
+    // 外部 read_buf 只需要消费本次 data 中被处理的字节
+    size_t consumed_from_new = (consumed_total > old_pending) ? (consumed_total - old_pending) : 0;
 
     if (!check_size_limit()) return 0;
-
-    return consumed;
+    return consumed_from_new;
 }
 
 // ============== 调度 ==============
@@ -170,7 +216,7 @@ void HttpParser::process() {
 // ============== RequestLine ==============
 
 void HttpParser::process_request_line() {
-    std::string line;
+    std::string_view line;
     if (!extract_line(line)) return;
     if (line.empty()) return;  // 跳过前导空行
 
@@ -189,34 +235,37 @@ void HttpParser::process_headers() {
 
         // 空行 \r\n 表示头部结束
         if (partial_[0] == '\r' && partial_[1] == '\n') {
-            partial_.erase(0, 2);
+            consume_partial(2);
             finalize_headers();
             return;
         }
 
-        std::string line;
+        std::string_view line;
         if (!extract_line(line)) return;
         if (line.empty()) continue;
 
         size_t colon = line.find(':');
-        if (colon == std::string::npos) continue;  // 宽松跳过无效行
+        if (colon == std::string_view::npos) continue;  // 宽松跳过无效行
 
-        std::string key = line.substr(0, colon);
+        std::string key(line.data(), colon);
         to_lower_inplace(key);
 
         size_t vs = colon + 1;
         while (vs < line.size() && (line[vs] == ' ' || line[vs] == '\t')) ++vs;
-        request_.headers[key] = line.substr(vs);
+        request_.headers[std::move(key)].assign(line.data() + vs, line.size() - vs);
     }
 }
 
 void HttpParser::finalize_headers() {
     auto te = request_.headers.find("transfer-encoding");
     if (te != request_.headers.end()) {
-        std::string v = te->second;
-        to_lower_inplace(v);
-        if (v.find("chunked") != std::string::npos)
-            is_chunked_ = true;
+        std::string_view v(te->second);
+        for (size_t i = 0; i + 7 <= v.size(); ++i) {
+            if (str_iequal(v.substr(i, 7), "chunked")) {
+                is_chunked_ = true;
+                break;
+            }
+        }
     }
 
     if (is_chunked_) {
@@ -225,12 +274,13 @@ void HttpParser::finalize_headers() {
         current_chunk_size_ = 0;
         current_chunk_read_ = 0;
     } else {
-        // Content-Length 已在 raw_ 头部中
-        const char* r = raw_.data();
-        size_t rl = raw_.size();
-        const char* he = static_cast<const char*>(memmem(r, rl, "\r\n\r\n", 4));
-        if (he) {
-            content_length_ = parse_content_length(r, he - r);
+        auto cl = request_.headers.find("content-length");
+        if (cl != request_.headers.end()) {
+            auto parsed = parse_int_safe(cl->second.c_str(),
+                                         cl->second.c_str() + cl->second.size());
+            if (parsed.has_value() && parsed.value() >= 0) {
+                content_length_ = parsed.value();
+            }
         }
 
         if (content_length_ > 0) {
@@ -254,17 +304,33 @@ void HttpParser::process_body() {
     if (remaining == 0) {
         // 从 raw_ 提取 body
         const char* r = raw_.data();
-        const char* he = static_cast<const char*>(memmem(r, raw_.size(), "\r\n\r\n", 4));
+        const char* he = static_cast<const char*>(::memmem(r, raw_.size(), "\r\n\r\n", 4));
         if (he) {
-            request_.body = raw_.substr(he + 4 - r, static_cast<size_t>(content_length_));
+            request_.body.assign(he + 4, static_cast<size_t>(content_length_));
         }
         state_ = State::Complete;
         return;
     }
 
     size_t consume = std::min(partial_.size(), remaining);
-    partial_.erase(0, consume);
+    consume_partial(consume);
     body_read_ += consume;
+}
+
+static bool parse_hex(std::string_view s, size_t& out) {
+    if (s.empty()) return false;
+    size_t value = 0;
+    for (char ch : s) {
+        unsigned char c = static_cast<unsigned char>(ch);
+        size_t digit;
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else return false;
+        value = (value << 4) | digit;
+    }
+    out = value;
+    return true;
 }
 
 // ============== ChunkedBody ==============
@@ -273,23 +339,23 @@ void HttpParser::process_chunked() {
     while (state_ == State::ChunkedBody) {
         switch (chunk_phase_) {
         case ChunkPhase::SizeLine: {
-            size_t pos = partial_.find("\r\n");
-            if (pos == std::string::npos) return;
+            const char* data = partial_.data();
+            size_t len = partial_.size();
+            const char* cr = static_cast<const char*>(::memchr(data, '\r', len));
+            if (!cr || cr + 1 >= data + len || cr[1] != '\n') return;
 
-            std::string hex = partial_.substr(0, pos);
-            partial_.erase(0, pos + 2);
-
+            size_t line_len = cr - data;
+            std::string_view hex(data, line_len);
             size_t semi = hex.find(';');
-            if (semi != std::string::npos) hex.resize(semi);
+            if (semi != std::string_view::npos) hex = std::string_view(hex.data(), semi);
 
-            errno = 0;
-            char* endp = nullptr;
-            long sz = std::strtol(hex.c_str(), &endp, 16);
-            if (errno || endp != hex.c_str() + hex.size() || sz < 0) {
+            size_t sz = 0;
+            if (!parse_hex(hex, sz)) {
                 state_ = State::Error;
                 return;
             }
-            current_chunk_size_ = static_cast<size_t>(sz);
+            current_chunk_size_ = sz;
+            consume_partial(line_len + 2);
 
             if (current_chunk_size_ == 0) {
                 chunk_phase_ = ChunkPhase::Trailer;
@@ -309,13 +375,13 @@ void HttpParser::process_chunked() {
                     state_ = State::Error;
                     return;
                 }
-                partial_.erase(0, 2);
+                consume_partial(2);
                 chunk_phase_ = ChunkPhase::SizeLine;
                 break;
             }
 
             size_t consume = std::min(partial_.size(), remaining);
-            partial_.erase(0, consume);
+            consume_partial(consume);
             current_chunk_read_ += consume;
 
             if (!check_size_limit()) return;
@@ -328,13 +394,15 @@ void HttpParser::process_chunked() {
             while (true) {
                 if (partial_.size() < 2) return;
                 if (partial_[0] == '\r' && partial_[1] == '\n') {
-                    partial_.erase(0, 2);
+                    consume_partial(2);
                     chunk_phase_ = ChunkPhase::End;
                     break;
                 }
-                size_t pos = partial_.find("\r\n");
-                if (pos == std::string::npos) return;
-                partial_.erase(0, pos + 2);
+                const char* data = partial_.data();
+                size_t len = partial_.size();
+                const char* cr = static_cast<const char*>(::memchr(data, '\r', len));
+                if (!cr || cr + 1 >= data + len || cr[1] != '\n') return;
+                consume_partial(static_cast<size_t>(cr - data) + 2);
             }
             break;
         }

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 // ============================================================
 // 静态工具函数：一次性解析
@@ -95,5 +96,6 @@ private:
     void process_chunked();
     void finalize_headers();
     bool check_size_limit();
-    bool extract_line(std::string& line);
+    void consume_partial(size_t n);
+    bool extract_line(std::string_view& line);
 };

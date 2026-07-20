@@ -1,52 +1,20 @@
 #include "gateway/net/buffer.h"
 
 #include <cerrno>
+#include <cstring>
 #include <sys/uio.h>
 #include <unistd.h>
 
 namespace buffer {
-    std::vector<int> getNext(const char* str, size_t str_size){
-        std::vector<int> next;
-        next.push_back(0);
-        size_t prefix_len = 0;
-        size_t i = 1;
-        while (i < str_size) {
-            if (str[i] == str[prefix_len]) {
-                prefix_len++;
-                next.push_back(prefix_len);
-            } else {
-                if (prefix_len == 0) {
-                    next.push_back(0);
-                    i++;
-                } else {
-                    prefix_len = next[prefix_len - 1];
-                }
-            }
-        }
-        return next;
+    // 对短模式使用 memmem（GNU 扩展），比 KMP 省去预处理开销
+    const char* fast_search(const char* haystack, size_t haystack_size,
+                            const char* needle, size_t needle_size) {
+        if (needle_size == 0) return haystack;
+        if (haystack_size < needle_size) return nullptr;
+        return static_cast<const char*>(::memmem(haystack, haystack_size,
+                                                 needle, needle_size));
     }
-    const char* kmpSearch(const char* str, size_t str_size, const char* needle, size_t needle_size){
-        std::vector<int> next = getNext(needle, needle_size);
-        size_t i = 0;
-        size_t j = 0;
-        while (i < str_size && j < needle_size) {
-            if (str[i] == needle[j]) {
-                i++;
-                j++;
-            } else {
-                if (j == 0) {
-                    i++;
-                } else {
-                    j = next[j - 1];
-                }
-            }
-        }
-        if (j == needle_size) {
-            return str + i - j;
-        }
-        return nullptr;
-    }
-};
+}
 
 Buffer::Buffer() 
     : buf_(kInitialSize + kPrependableSize)
@@ -130,26 +98,11 @@ const char* Buffer::find(const char* needle, size_t needle_size) const {
     if (needle_size == 0 || readable_size() < needle_size) {
         return nullptr;
     }
-    
-    const char* data = readable_data();
-    return buffer::kmpSearch(
-        data, 
-        readable_size(), 
-        needle, 
-        needle_size
-    ); 
+    return buffer::fast_search(readable_data(), readable_size(), needle, needle_size);
 }
 
 const char* Buffer::find(char c) const {
-    const char* date = readable_data();
-    const char* end = date + readable_size();
-    
-    for (const char* p = date; p != end; ++p) {
-        if (*p == c) {
-            return p;
-        }
-    }
-    return nullptr;
+    return static_cast<const char*>(::memchr(readable_data(), c, readable_size()));
 }
 
 const char* Buffer::find_crlf() const {

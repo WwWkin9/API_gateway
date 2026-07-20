@@ -8,9 +8,12 @@
 // ============== 工具 ==============
 
 std::string LoadBalancer::make_key(const std::string& host, int port) {
-    std::ostringstream oss;
-    oss << host << ':' << port;
-    return oss.str();
+    std::string key;
+    key.reserve(host.size() + 12);
+    key += host;
+    key += ':';
+    key += std::to_string(port);
+    return key;
 }
 
 std::string LoadBalancer::make_key(const Backend& backend) {
