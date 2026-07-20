@@ -11,7 +11,7 @@ struct Backend {
 
 struct Route {
     std::string prefix;
-    Backend backend;
+    std::vector<Backend> backends;
 };
 
 struct GatewayConfig {

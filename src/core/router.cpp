@@ -6,13 +6,13 @@ Router::Router(const std::vector<Route>& routes) : routes_(routes) {
     sort_routes();
 }
 
-std::optional<Backend> Router::match(const std::string& path) const {
+std::optional<std::vector<Backend>> Router::match(const std::string& path) const {
     for (const auto& route : routes_) {
         if (path.size() >= route.prefix.size() &&
             path.compare(0, route.prefix.size(), route.prefix) == 0) {
             if (route.prefix.size() == path.size() || path[route.prefix.size()] == '/') {
-                // 完全匹配，返回后端
-                return route.backend;
+                // 完全匹配，返回后端列表
+                return route.backends;
             }
         }
     }

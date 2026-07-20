@@ -24,7 +24,7 @@ public:
     explicit Router(const std::vector<Route>& routes);
 
     // 按路径匹配后端，返回 std::nullopt 表示无匹配
-    std::optional<Backend> match(const std::string& path) const;
+    std::optional<std::vector<Backend>> match(const std::string& path) const;
 
     // 动态添加路由
     void add_route(const Route& route);

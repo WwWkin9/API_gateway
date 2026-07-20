@@ -19,6 +19,7 @@
 Gateway::Gateway(const GatewayConfig& config) : config_(config) {
     router_ = std::make_unique<Router>(config.routes);
     proxy_ = std::make_unique<Proxy>(config.backend_timeout_ms);
+    load_balancer_ = std::make_unique<LoadBalancer>(LBAlgorithm::RoundRobin);
 
     // 创建后端连接池并注入 Proxy
     auto pool = std::make_shared<BackendPool>(config.pool_max_idle_per_host,
@@ -60,17 +61,14 @@ void Gateway::process_request(int fd, std::string raw) {
 
     // ---- 路由 + 转发 ----
     std::string out;
-    auto backend_opt = router_->match(req.path);
-    if (!backend_opt.has_value()) {
+    auto backends = router_->match(req.path);
+    if (!backends.has_value()) {
         out = make_404(false).to_string();
     } else {
-        out = proxy_->forward(backend_opt.value(), raw);
-    }
-    
-    if (backend_opt.value().host.empty()) {
-        out = make_404(false).to_string();
-    } else {
-        out = proxy_->forward(backend_opt.value(), raw);
+        Backend target = load_balancer_->select(backends.value());
+        load_balancer_->on_connect(target);
+        out = proxy_->forward(target, raw);
+        load_balancer_->on_disconnect(target);
     }
 
     // 如果后端没写 Connection 头，简单补上

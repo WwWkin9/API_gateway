@@ -8,6 +8,7 @@
 #include "gateway/net/tcp_server.h"
 #include "gateway/core/router.h"
 #include "gateway/proxy/proxy.h"
+#include "gateway/proxy/load_balancer.h"
 
 
 
@@ -46,6 +47,9 @@ private:
 
     // 代理
     std::unique_ptr<Proxy> proxy_;
+
+    // 负载均衡器
+    std::unique_ptr<LoadBalancer> load_balancer_;
 
     // 过滤器链
     std::vector<std::unique_ptr<Filter>> filters_;
