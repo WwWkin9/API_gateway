@@ -3,6 +3,7 @@
 #include "gateway/http/request.h"
 #include "gateway/http/response.h"
 #include "gateway/logger/logger.h"
+#include "gateway/monitor/stats.h"
 #include "gateway/proxy/backend_pool.h"
 #include "gateway/utils/utils.h"
 #include "gateway/filter/rate_limit_filter.h"
@@ -12,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <ctime>
 #include <sstream>
 #include <string.h>
@@ -30,6 +32,10 @@ Gateway::Gateway(const GatewayConfig& config) : config_(config) {
 }
 
 void Gateway::add_filter(std::unique_ptr<Filter> filter) {
+    // 捕获 RateLimitFilter 指针，用于定时清理
+    if (auto* rlf = dynamic_cast<RateLimitFilter*>(filter.get())) {
+        rate_limit_filter_ = rlf;
+    }
     filters_.push_back(std::move(filter));
 }
 
@@ -41,17 +47,30 @@ void Gateway::process_request(int fd, std::string raw) {
         return;
     }
 
-    // 2. 过滤器链：请求阶段
+    // 2. 检查内部端点
+    std::string internal_resp;
+    if (handle_internal_endpoint(req.path, internal_resp)) {
+        auto it = connections_.find(fd);
+        if (it != connections_.end()) {
+            it->second->send(internal_resp, false);
+        }
+        return;
+    }
+
+    // 3. 过滤器链：请求阶段
     FilterContext fctx;
     fctx.req = &req;
     for (auto& f : filters_) {
         if (!f->on_request(fctx)) {
+            GatewayStats::instance().inc_rate_limited();
             send_error_and_close(fd, make_400(false).to_string());
             return;
         }
     }
 
-    // 3. 路由 + 负载均衡
+    auto start_time = std::chrono::steady_clock::now();
+
+    // 4. 路由 + 负载均衡
     auto backends = router_->match(req.path);
     if (!backends.has_value()) {
         send_error_and_close(fd, make_404(false).to_string());
@@ -78,11 +97,18 @@ void Gateway::process_request(int fd, std::string raw) {
     std::string raw_resp = proxy_->forward(target, raw);
     load_balancer_->on_disconnect(target);
 
-    // 6. 断路器结果上报
+    // 6. 统计 + 断路器上报
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time).count();
+
     bool success = !raw_resp.empty() && raw_resp.find("HTTP/1.1 5") != 0;
+    GatewayStats::instance().record_request(req.path, elapsed);
     if (success) {
+        GatewayStats::instance().record_success(req.path);
         cb.on_success();
     } else {
+        GatewayStats::instance().record_error(req.path);
+        GatewayStats::instance().inc_upstream_errors();
         cb.on_failure();
     }
 
@@ -194,6 +220,81 @@ void Gateway::cleanup_idle_connections() {
     }
 }
 
+std::vector<Backend> Gateway::collect_all_backends() const {
+    std::vector<Backend> result;
+    for (const auto& route : config_.routes) {
+        for (const auto& b : route.backends) {
+            result.push_back(b);
+        }
+    }
+    // 去重
+    std::sort(result.begin(), result.end(),
+        [](const Backend& a, const Backend& b) {
+            return a.host < b.host || (a.host == b.host && a.port < b.port);
+        });
+    result.erase(
+        std::unique(result.begin(), result.end(),
+            [](const Backend& a, const Backend& b) {
+                return a.host == b.host && a.port == b.port;
+            }),
+        result.end());
+    return result;
+}
+
+bool Gateway::handle_internal_endpoint(const std::string& path, std::string& response) {
+    // /stats - JSON 格式统计
+    if (path == "/stats" || path == "/stats/") {
+        auto snap = GatewayStats::instance().global_snapshot();
+        std::ostringstream oss;
+        oss << "HTTP/1.1 200 OK\r\n"
+            << "Content-Type: application/json\r\n"
+            << "Connection: close\r\n"
+            << "\r\n"
+            << "{"
+            << "\"total_requests\":" << snap.total_requests << ","
+            << "\"total_success\":" << snap.total_success << ","
+            << "\"total_errors\":" << snap.total_errors << ","
+            << "\"avg_latency_ms\":" << snap.avg_latency_ms << ","
+            << "\"max_latency_ms\":" << snap.max_latency_ms << ","
+            << "\"in_flight\":" << snap.in_flight << ","
+            << "\"upstream_errors\":" << snap.upstream_errors << ","
+            << "\"circuit_breaker_trips\":" << snap.circuit_breaker_trips << ","
+            << "\"rate_limited\":" << snap.rate_limited;
+        // 添加各路由统计
+        auto route_stats = GatewayStats::instance().route_snapshot();
+        if (!route_stats.empty()) {
+            oss << ",\"routes\":{";
+            bool first = true;
+            for (const auto& [name, rs] : route_stats) {
+                if (!first) oss << ",";
+                first = false;
+                oss << "\"" << name << "\":{"
+                    << "\"requests\":" << rs.total_requests << ","
+                    << "\"success\":" << rs.success_count << ","
+                    << "\"errors\":" << rs.error_count << ","
+                    << "\"avg_ms\":" << rs.avg_latency_ms
+                    << "}";
+            }
+            oss << "}";
+        }
+        oss << "}";
+        response = oss.str();
+        return true;
+    }
+
+    // /health - 健康检查
+    if (path == "/health" || path == "/health/") {
+        response = "HTTP/1.1 200 OK\r\n"
+                   "Content-Length: 2\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "OK";
+        return true;
+    }
+
+    return false;
+}
+
 void Gateway::run() {
     // ---- 1. 初始化事件循环 ----
     try {
@@ -244,7 +345,7 @@ void Gateway::run() {
     tcp_server_->start();
 
     // ---- 5. 注册周期性定时任务 ----
-    // 空闲连接清理（每隔 idle_cleanup_interval_sec 秒执行）
+    // 空闲连接清理
     int cleanup_ms = config_.idle_cleanup_interval_sec * 1000;
     timer_->run_every(cleanup_ms, [this]() {
         cleanup_idle_connections();
@@ -256,7 +357,30 @@ void Gateway::run() {
         }
     });
 
-    // ---- 6. 注册空闲回调：驱动定时器 tick ----
+    // ---- 6. 初始化健康检查器 ----
+    health_checker_ = std::make_unique<HealthChecker>();
+    health_checker_->set_interval_ms(5000);
+    health_checker_->set_connect_timeout_ms(config_.backend_timeout_ms);
+    health_checker_->set_on_status_change(
+        [](const Backend& backend, bool healthy) {
+            if (healthy) {
+                LOG_INFO("backend %s:%d is healthy", backend.host.c_str(), backend.port);
+            } else {
+                LOG_WARN("backend %s:%d is UNHEALTHY", backend.host.c_str(), backend.port);
+            }
+        });
+
+    auto all_backends = collect_all_backends();
+    for (const auto& b : all_backends) {
+        health_checker_->add_backend(b);
+    }
+
+    // 每 5 秒执行一次健康检查
+    timer_->run_every(5000, [this]() {
+        health_checker_->check_all();
+    });
+
+    // ---- 7. 注册空闲回调：驱动定时器 tick ----
     event_loop_->set_idle_callback([this]() {
         timer_->tick();
     });

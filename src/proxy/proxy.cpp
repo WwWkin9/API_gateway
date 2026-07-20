@@ -23,11 +23,12 @@ int Proxy::nb_connect(int fd, const sockaddr* addr, socklen_t len, int timeout_m
     pfd.fd = fd;
     pfd.events = POLLOUT;
     ret = poll(&pfd, 1, timeout_ms);
-    if (ret < 0) return -1;
-    
+    if (ret <= 0) return -1;  // timeout or error
+
     int err = 0;
     socklen_t errlen = sizeof(err);
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&err, &errlen) < 0) return -1;
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen) < 0) return -1;
+    if (err != 0) return -1;
 
     return 0;
 }

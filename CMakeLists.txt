@@ -11,6 +11,7 @@ add_executable(gateway
 
     # core
     src/core/config.cpp
+    src/core/config_loader.cpp
     src/core/gateway.cpp
     src/core/router.cpp
 
@@ -31,6 +32,7 @@ add_executable(gateway
     src/proxy/load_balancer.cpp
     src/proxy/circuit_breaker.cpp
     src/proxy/backend.cpp
+    src/proxy/health_checker.cpp
 
     # filter
     src/filter/logging_filter.cpp
@@ -43,6 +45,9 @@ add_executable(gateway
 
     # timer
     src/timer/timer.cpp
+
+    # monitor
+    src/monitor/stats.cpp
 
     # utils
     src/utils/utils.cpp

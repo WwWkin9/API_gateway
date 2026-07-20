@@ -53,7 +53,7 @@ bool BackendConnection::connect(int timeout_ms) {
     
     int err = 0;
     socklen_t len = sizeof(err);
-    if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, (sockaddr*)&err, &len) < 0 || err != 0) {
+    if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
         close();
         return false;
     }
@@ -76,7 +76,7 @@ bool BackendConnection::send_all(const char* data, size_t len, int timeout_ms) {
         ssize_t n = ::send(fd_, data + sent, len - sent, 0);
         if (n > 0) {
             sent += static_cast<size_t>(n);
-        } else if(n < 0 && errno == EAGAIN || errno == EWOULDBLOCK) {
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         } else {
             return false;
@@ -105,7 +105,7 @@ std::string BackendConnection::recv_all(int timeout_ms) {
         if (n > 0) {
             resp.append(buf, static_cast<size_t>(n));
             got_data = true;
-        } else if(n < 0 && errno == EAGAIN || errno == EWOULDBLOCK) {
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         } else {
             break;
@@ -125,7 +125,7 @@ bool BackendConnection::is_alive() const {
     // SO_ERROR 检查：连接是否异常
     int err = 0;
     socklen_t len = sizeof(err);
-    if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, (sockaddr*)&err, &len) < 0 ) return false;
+    if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &len) < 0) return false;
 
     if (err != 0) return false;
 

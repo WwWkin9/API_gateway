@@ -25,7 +25,7 @@ Connection::~Connection() {
 }
 
 void Connection::set_message_callback(MessageCallback cb) {
-    message_callback_ = cb = std::move(cb);
+    message_callback_ = std::move(cb);
 }
 
 void Connection::set_close_callback(CloseCallback cb) {

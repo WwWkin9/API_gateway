@@ -1,0 +1,25 @@
+{
+    "listen_port": 8080,
+    "keep_alive_timeout_sec": 10,
+    "thread_count": 4,
+    "backend_timeout_ms": 3000,
+    "max_request_size": 65536,
+    "max_epoll_events": 512,
+    "idle_cleanup_interval_sec": 5,
+    "pool_max_idle_per_host": 10,
+    "pool_idle_timeout_sec": 60,
+    "routes": [
+        {
+            "prefix": "/api/user",
+            "backends": [
+                {"host": "127.0.0.1", "port": 9001}
+            ]
+        },
+        {
+            "prefix": "/api/order",
+            "backends": [
+                {"host": "127.0.0.1", "port": 9002}
+            ]
+        }
+    ]
+}

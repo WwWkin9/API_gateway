@@ -10,6 +10,7 @@
 #include "gateway/proxy/proxy.h"
 #include "gateway/proxy/load_balancer.h"
 #include "gateway/proxy/circuit_breaker.h"
+#include "gateway/proxy/health_checker.h"
 #include "gateway/filter/rate_limit_filter.h"
 #include "gateway/timer/timer.h"
 
@@ -54,6 +55,9 @@ private:
     std::unordered_map<std::string, CircuitBreaker> circuit_breakers_;
     mutable std::mutex cb_mutex_;
 
+    // 健康检查器
+    std::unique_ptr<HealthChecker> health_checker_;
+
     // 过滤器链
     std::vector<std::unique_ptr<Filter>> filters_;
 
@@ -67,4 +71,10 @@ private:
 
     // 发送错误响应并关闭连接
     void send_error_and_close(int fd, const std::string& resp);
+
+    // 内部端点（/stats, /metrics, /health）
+    bool handle_internal_endpoint(const std::string& path, std::string& response);
+
+    // 收集所有后端（去重）
+    std::vector<Backend> collect_all_backends() const;
 };
