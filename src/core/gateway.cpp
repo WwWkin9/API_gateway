@@ -17,19 +17,12 @@
 
 
 
-Gateway::Gateway(const GatewayConfig& config) : config_(config) {}
+Gateway::Gateway(const GatewayConfig& config) : config_(config) {
+    router_ = std::make_unique<Router>(config.routes);
+}
 
 void Gateway::add_filter(std::unique_ptr<Filter> filter) {
     filters_.push_back(std::move(filter));
-}
-
-Backend Gateway::route(const std::string& path) const {
-    for (const auto& r : config_.routes) {
-        if (path.rfind(r.prefix, 0) == 0) {
-            return r.backend;
-        }
-    }
-    return {"", 0};
 }
 
 // 非阻塞 connect，返回 0 成功，-1 失败/超时
@@ -180,13 +173,18 @@ void Gateway::process_request(int fd, std::string raw) {
     }
 
     // ---- 路由 + 转发 ----
-    Backend backend = route(req.path);
-
     std::string out;
-    if (backend.host.empty()) {
+    auto backend_opt = router_->match(req.path);
+    if (!backend_opt.has_value()) {
         out = make_404(false).to_string();
     } else {
-        out = forward_to_backend(backend, raw);
+        out = forward_to_backend(backend_opt.value(), raw);
+    }
+    
+    if (backend_opt.value().host.empty()) {
+        out = make_404(false).to_string();
+    } else {
+        out = forward_to_backend(backend_opt.value(), raw);
     }
 
     // 如果后端没写 Connection 头，简单补上
