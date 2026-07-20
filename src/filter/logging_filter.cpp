@@ -1,13 +1,12 @@
 #include "gateway/filter/logging_filter.h"
+#include "gateway/logger/logger.h"
 
 #include <ctime>
-#include <iostream>
 
 bool LoggingFilter::on_request(FilterContext& ctx) {
     ctx.start_time = std::time(nullptr);
     const auto& req = *ctx.req;
-    std::cout << "[INFO] " << ctx.request_id << " -> " << req.method
-              << " " << req.path << std::endl;
+    LOG_INFO("%s -> %s %s", ctx.request_id.c_str(), req.method.c_str(), req.path.c_str());
     return true;
 }
 
@@ -16,7 +15,6 @@ void LoggingFilter::on_response(FilterContext& ctx) {
     double elapsed = difftime(now, ctx.start_time);
     const auto& req = *ctx.req;
     int status = ctx.resp ? ctx.resp->status_code : 0;
-    std::cout << "[INFO] " << ctx.request_id << " <- " << req.method
-              << " " << req.path << " " << status
-              << " (" << elapsed << "s)" << std::endl;
+    LOG_INFO("%s <- %s %s %d (%.1fs)", ctx.request_id.c_str(),
+             req.method.c_str(), req.path.c_str(), status, elapsed);
 }

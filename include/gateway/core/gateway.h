@@ -11,8 +11,7 @@
 #include "gateway/proxy/load_balancer.h"
 #include "gateway/proxy/circuit_breaker.h"
 #include "gateway/filter/rate_limit_filter.h"
-
-
+#include "gateway/timer/timer.h"
 
 #include <memory>
 #include <mutex>
@@ -20,11 +19,6 @@
 #include <string>
 #include <vector>
 #include <ctime>
-
-// 连接状态
-struct ConnState {
-    std::time_t last_active;
-};
 
 class Gateway {
 public:
@@ -37,6 +31,7 @@ public:
 private:
     GatewayConfig config_;
     std::unique_ptr<EventLoop> event_loop_;
+    std::unique_ptr<Timer> timer_;
     std::unique_ptr<ThreadPool> pool_;
     RateLimitFilter* rate_limit_filter_ = nullptr;
 
@@ -61,7 +56,6 @@ private:
 
     // 过滤器链
     std::vector<std::unique_ptr<Filter>> filters_;
-    std::time_t last_cleanup_time_ = 0;
 
     // 线程池 worker：对已读取的 raw 进行解析、过滤、转发
     void process_request(int fd, std::string raw);

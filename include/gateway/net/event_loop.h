@@ -1,11 +1,13 @@
 #pragma once
 
-
 #include <sys/epoll.h>
 #include <functional>
 #include <vector>
 #include <unordered_map>
 #include <atomic>
+
+// 前向声明
+class Timer;
 
 #define EPOLL_MAX_EVENTS 512
 
@@ -30,6 +32,9 @@ public:
     void set_callback(int fd, Callback cb);
     void remove_callback(int fd);
 
+    // 设置定时器：epoll_wait 会根据最近的定时器到期时间动态调整超时值
+    void set_timer(Timer* timer);
+
     void run(int timeout_ms = 1000);
     void stop();
 
@@ -41,7 +46,12 @@ private:
     IdleCallback idle_cb_;
     std::atomic<bool> running_{false};
     int max_events_;
-    std::vector<struct epoll_event> events_;                // epoll 事件队列
+    std::vector<struct epoll_event> events_;
     std::unordered_map<int, Callback> callbacks_;
-    std::unordered_map<int, uint32_t> registrations_;       // 注册的文件描述符和事件类型
+    std::unordered_map<int, uint32_t> registrations_;
+
+    Timer* timer_ = nullptr;
+
+    // 计算本次 epoll_wait 的有效超时（结合定时器到期时间）
+    int64_t compute_timeout_ms(int default_ms) const;
 };

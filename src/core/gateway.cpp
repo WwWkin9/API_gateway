@@ -2,6 +2,7 @@
 
 #include "gateway/http/request.h"
 #include "gateway/http/response.h"
+#include "gateway/logger/logger.h"
 #include "gateway/proxy/backend_pool.h"
 #include "gateway/utils/utils.h"
 #include "gateway/filter/rate_limit_filter.h"
@@ -12,7 +13,6 @@
 #include <unistd.h>
 
 #include <ctime>
-#include <iostream>
 #include <sstream>
 #include <string.h>
 
@@ -199,14 +199,18 @@ void Gateway::run() {
     try {
         event_loop_ = std::make_unique<EventLoop>(config_.max_epoll_events);
     } catch (const std::exception& e) {
-        std::cerr << "Gateway::run exception: " << e.what() << std::endl;
+        LOG_ERROR("Gateway::run EventLoop init failed: %s", e.what());
         return;
     }
-   
-    // ---- 2. 创建线程池 ----
+
+    // ---- 2. 初始化定时器并关联到 EventLoop ----
+    timer_ = std::make_unique<Timer>();
+    event_loop_->set_timer(timer_.get());
+
+    // ---- 3. 创建线程池 ----
     pool_ = std::make_unique<ThreadPool>(config_.thread_count);
 
-    // ---- 3. 注册 listen_fd 的回调: accept 接受新连接 ----
+    // ---- 4. 注册 listen_fd 的回调: accept 接受新连接 ----
     tcp_server_ = std::make_unique<TCPServer>(event_loop_.get(), config_.listen_port);
     tcp_server_->set_new_connection_callback([this](int cfd, std::string peer_ip, int peer_port){
         (void)peer_ip;
@@ -239,23 +243,27 @@ void Gateway::run() {
     });
     tcp_server_->start();
 
-    // ---- 4. 注册空闲回调 ----
-    event_loop_->set_idle_callback([this](){
-        std::time_t now = std::time(nullptr);
-        if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
-            cleanup_idle_connections();
-            proxy_->cleanup_pool();
+    // ---- 5. 注册周期性定时任务 ----
+    // 空闲连接清理（每隔 idle_cleanup_interval_sec 秒执行）
+    int cleanup_ms = config_.idle_cleanup_interval_sec * 1000;
+    timer_->run_every(cleanup_ms, [this]() {
+        cleanup_idle_connections();
+        proxy_->cleanup_pool();
 
-            // 清理限流器中 5 分钟未活跃的桶
-            if (rate_limit_filter_) {
-                rate_limit_filter_->cleanup_expired_buckets(300);
-            }
-            last_cleanup_time_ = now;
+        // 清理限流器中 5 分钟未活跃的桶
+        if (rate_limit_filter_) {
+            rate_limit_filter_->cleanup_expired_buckets(300);
         }
     });
-    std::cout << "Gateway listening on port " << config_.listen_port
-              << " (reactor + " << config_.thread_count << " workers)\n";
 
-    // ---- 5. 启动事件循环（阻塞直到 stop() 被调用）
+    // ---- 6. 注册空闲回调：驱动定时器 tick ----
+    event_loop_->set_idle_callback([this]() {
+        timer_->tick();
+    });
+
+    LOG_INFO("Gateway listening on port %d (reactor + %d workers)",
+             config_.listen_port, config_.thread_count);
+
+    // ---- 7. 启动事件循环（阻塞直到 stop() 被调用）
     event_loop_->run(1000);
 }

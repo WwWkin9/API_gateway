@@ -1,10 +1,10 @@
 #include "gateway/net/tcp_server.h"
-#include "gateway/utils/utils.h"   // create_listen_socket, set_nonblocking
+#include "gateway/utils/utils.h"
+#include "gateway/logger/logger.h"
 
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cerrno>
-#include <iostream>
 #include <cstring>
 
 TCPServer::TCPServer(EventLoop* event_loop, int port)
@@ -25,7 +25,7 @@ void TCPServer::set_new_connection_callback(NewConnectionCallback cb) {
 void TCPServer::start() {
     listen_fd_ = create_listen_socket(port_);
     if (listen_fd_ < 0) {
-        std::cerr << "TCPServer::start: create_listen_socket failed: " << strerror(errno) << std::endl;
+        LOG_ERROR("TCPServer::start: create_listen_socket failed on port %d: %s", port_, strerror(errno));
         return;
     }
 
@@ -45,7 +45,7 @@ void TCPServer::on_accept() {
         if (cfd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break; // 非阻塞模式下没有新连接
             if (errno == EMFILE || errno == ENFILE) {
-                std::cerr << "TCPServer::on_accept: accept failed: " << strerror(errno) << std::endl;
+                LOG_WARN("TCPServer::on_accept: accept failed: %s", strerror(errno));
                 continue; // 文件描述符耗尽，但 epoll 已水平触发，等下次 accept
             }
             break;
@@ -53,7 +53,7 @@ void TCPServer::on_accept() {
 
         // 设置非阻塞模式
         if (set_nonblocking(cfd) < 0) {
-            std::cerr << "TCPServer::on_accept: set_nonblocking failed: " << strerror(errno) << std::endl;
+            LOG_ERROR("TCPServer::on_accept: set_nonblocking failed: %s", strerror(errno));
             ::close(cfd);
             continue;
         }

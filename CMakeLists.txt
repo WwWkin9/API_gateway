@@ -37,6 +37,13 @@ add_executable(gateway
     src/filter/request_id_filter.cpp
     src/filter/rate_limit_filter.cpp    
 
+    # logger
+    src/logger/logger.cpp
+    src/logger/async_logger.cpp
+
+    # timer
+    src/timer/timer.cpp
+
     # utils
     src/utils/utils.cpp
     src/utils/thread_pool.cpp
