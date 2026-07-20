@@ -1,0 +1,7 @@
+phase,connections,threads,duration,requests_per_sec,transfer_per_sec,avg_latency,p50,p75,p90,p99,non_2xx_3xx,socket_errors
+warmup,50,8,10s,285.19,41.95KB,172.55ms,182.10ms,255.81ms,348.92ms,461.98ms,0,0
+staircase,50,8,30s,364.83,53.41KB,131.09ms,132.56ms,192.50ms,239.25ms,294.18ms,0,0
+staircase,100,8,30s,366.28,53.49KB,260.89ms,266.40ms,384.50ms,477.33ms,578.57ms,0,0
+staircase,200,8,30s,468.19,59.12KB,438.73ms,474.10ms,727.58ms,936.42ms,1.01s,5168,0
+staircase,400,8,30s,1644.30,161.13KB,335.84ms,162.03ms,553.64ms,948.63ms,1.27s,44659,51
+staircase,800,8,30s,2071.08,198.72KB,420.94ms,246.43ms,698.86ms,1.10s,1.37s,59038,0
