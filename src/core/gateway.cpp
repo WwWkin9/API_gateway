@@ -134,44 +134,32 @@ std::string Gateway::forward_to_backend(const Backend& backend, const std::strin
 void Gateway::cleanup_idle_connections() {
     std::time_t now = std::time(nullptr);
     std::time_t timeout = config_.keep_alive_timeout_sec;
-    auto it = conn_states_.begin();
-    while (it != conn_states_.end()) {
-        if (now - it->second.last_active >= timeout) {
-            int fd = it->first;
-            event_loop_->del_fd(fd);
-            event_loop_->remove_callback(fd);
-            close(fd);
-
-            it = conn_states_.erase(it);
+    
+    auto it = connections_.begin();
+    while (it != connections_.end()) {
+        auto conn = it->second;
+        if (now - conn->last_active_time() >= timeout && conn->state() == Connection::State::Reading) {
+            // 只清理处于 Reading 状态的空闲连接（不干扰正在处理/写响应的连接）
+            conn->force_close();
+             // force_close → close_internal → close_cb → connections_.erase(fd)
+            // 所以 erase 已在回调中完成，这里直接重新开始遍历
+            it = connections_.begin();
         } else {
             ++it;
         }
     }
 }
 
-void Gateway::handle_client(int fd) {
-   std::string raw = recv_all_request(fd, config_.max_request_size);
-
-   event_loop_->del_fd(fd);
-   event_loop_->remove_callback(fd);
-   conn_states_.erase(fd);
-
-   if (raw.empty()) {
-        close(fd);
-        return;
-   }
-   
-   pool_->submit([this, fd, raw = std::move(raw)]() {
-        process_request(fd, std::move(raw));
-   }); 
-}
 
 void Gateway::process_request(int fd, std::string raw) {
     HttpRequest req;
     if (!parse_http_request(raw, req)) {
         auto resp = make_400(false).to_string();
         send(fd, resp.c_str(), resp.size(), 0);
-        close(fd);
+        auto it = connections_.find(fd);
+        if (it != connections_.end()) {
+            it->second->force_close();
+        }
         return;
     }
 
@@ -182,11 +170,16 @@ void Gateway::process_request(int fd, std::string raw) {
         if (!f->on_request(fctx)) {
             auto resp = make_400(false).to_string();
             send(fd, resp.c_str(), resp.size(), 0);
-            close(fd);
+
+            auto it = connections_.find(fd);
+            if (it != connections_.end()) {
+                it->second->force_close();
+            }
             return;
         }
     }
 
+    // ---- 路由 + 转发 ----
     Backend backend = route(req.path);
 
     std::string out;
@@ -247,54 +240,65 @@ void Gateway::process_request(int fd, std::string raw) {
         }
     }
 
-    send(fd, out.c_str(), out.size(), 0);
-    close(fd);
+    // ---- 通过 Connection 发送 ----
+    auto conn = connections_.find(fd);
+    if (conn != connections_.end()) {
+        // 判断是否 keep-alive 连接
+        bool ka = request_keep_alive(req);
+        conn->second->send(out, ka);
+    } else {
+        // 连接已不在（不应发生），直接写 + 关闭
+        send(fd, out.c_str(), out.size(), 0);
+        close(fd);
+    }
 }
 
 void Gateway::run() {
     // ---- 1. 初始化事件循环 ----
     try {
-        event_loop_ = std::make_shared<EventLoop>(config_.max_epoll_events);
+        event_loop_ = std::make_unique<EventLoop>(config_.max_epoll_events);
     } catch (const std::exception& e) {
         std::cerr << "Gateway::run exception: " << e.what() << std::endl;
         return;
     }
-
-    // ---- 2. 创建监听 socket ----
-    int listen_fd = create_listen_socket(config_.listen_port);
-    if (listen_fd < 0) {
-        std::cerr << "Gateway::run create_listen_socket failed: " << strerror(errno) << std::endl;
-        return;
-    }
    
-    // ---- 3. 创建线程池 ----
+    // ---- 2. 创建线程池 ----
     pool_ = std::make_unique<ThreadPool>(config_.thread_count);
 
-    // ---- 4. 注册 listen_fd 的回调: accept 接受新连接 ----
-    event_loop_->add_fd(listen_fd, EPOLLIN);
-    event_loop_->set_callback(listen_fd, [this, listen_fd](int fd, uint32_t /*events*/){
-        (void)fd;
-
-        while (true) {
-            int cfd = accept(listen_fd, nullptr, nullptr);
-            if (cfd < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
-                }
-                break;
-            }
-            set_nonblocking(cfd);
-
-            // 注册新连接的 fd 到 epoll
-            event_loop_->add_fd(cfd, EPOLLIN);
-            event_loop_->set_callback(cfd, [this](int client_fd, uint32_t /*events*/){
-                handle_client(client_fd);
+    // ---- 3. 注册 listen_fd 的回调: accept 接受新连接 ----
+    tcp_server_ = std::make_unique<TCPServer>(event_loop_.get(), config_.listen_port);
+    tcp_server_->set_new_connection_callback([this](int cfd, std::string peer_ip, int peer_port){
+        (void)peer_ip;
+        (void)peer_port;
+        auto conn = std::make_shared<Connection>(
+               event_loop_.get(), cfd, config_.max_request_size
+        );
+      
+        conn->set_message_callback([this](int fd, std::string raw) {
+            pool_->submit([this, fd, raw = std::move(raw)]() {
+                process_request(fd, std::move(raw));
             });
-            conn_states_[cfd] = {std::time(nullptr)};
-        }
+        });
+        conn->set_close_callback([this](int fd) {
+            connections_.erase(fd);
+        });
+        event_loop_->add_fd(cfd, EPOLLIN | EPOLLOUT);
+        event_loop_->set_callback(cfd, [this, conn](int /*fd*/, uint32_t events) mutable{
+           if (events & EPOLLIN) {
+               conn->on_read();
+           }
+           if (events & EPOLLOUT) {
+               conn->on_write();
+           }
+           if (events & (EPOLLHUP | EPOLLERR)) {
+               conn->force_close();
+           }
+        });
+        connections_[cfd] = conn;
     });
+    tcp_server_->start();
 
-    // ---- 5. 注册空闲回调 ----
+    // ---- 4. 注册空闲回调 ----
     event_loop_->set_idle_callback([this](){
         std::time_t now = std::time(nullptr);
         if (now - last_cleanup_time_ >= config_.idle_cleanup_interval_sec) {
@@ -302,12 +306,9 @@ void Gateway::run() {
             last_cleanup_time_ = now;
         }
     });
-
     std::cout << "Gateway listening on port " << config_.listen_port
               << " (reactor + " << config_.thread_count << " workers)\n";
 
-    // 6. 启动事件循环（阻塞直到 stop() 被调用）
+    // ---- 5. 启动事件循环（阻塞直到 stop() 被调用）
     event_loop_->run(1000);
-
-    close(listen_fd);
 }

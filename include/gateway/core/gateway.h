@@ -4,6 +4,8 @@
 #include "gateway/filter/filter.h"
 #include "gateway/utils/thread_pool.h"
 #include "gateway/net/event_loop.h"
+#include "gateway/net/connection.h"
+#include "gateway/net/tcp_server.h"
 
 
 
@@ -28,10 +30,16 @@ public:
 
 private:
     GatewayConfig config_;
-    std::shared_ptr<EventLoop> event_loop_;
-    std::unordered_map<int, ConnState> conn_states_;
-    std::vector<std::unique_ptr<Filter>> filters_;
+    std::unique_ptr<EventLoop> event_loop_;
     std::unique_ptr<ThreadPool> pool_;
+
+    // TCP 服务器
+    std::unique_ptr<TCPServer> tcp_server_;
+
+    // 连接管理（shared_ptr：被 EventLoop 的 lambda 捕获）
+    std::unordered_map<int, std::shared_ptr<Connection>> connections_;
+
+    std::vector<std::unique_ptr<Filter>> filters_;
     std::time_t last_cleanup_time_ = 0;
 
     // 线程池 worker：对已读取的 raw 进行解析、过滤、转发
