@@ -1,12 +1,9 @@
 #include "gateway/net/connection.h"
-#include "gateway/utils/utils.h"   // parse_int_safe
+#include "gateway/http/parser.h"   // parse_content_length
 
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <cerrno>
-#include <cstring>
-#include <iostream>
-#include <string.h>
 
 // ============== 构造 / 析构 ==============
 
@@ -64,50 +61,28 @@ void Connection::on_read() {
 // ============== 消息解析 ==============
 
 bool Connection::try_parse_message() {
-    // 步骤 1：找到 HTTP 头结束标记 \r\n\r\n
-    while (true){
-        if (!header_parsed_){
+    while (true) {
+        if (!header_parsed_) {
             const char* header_end = read_buf_.find_double_crlf();
             if (!header_end) return false;
 
-            // ---- 解析 Content-Length ----
             const char* data = read_buf_.readable_data();
             size_t header_len = header_end - data;
 
-            const char* cl_pos = static_cast<const char*>(
-                memmem(data, header_len, "Content-Length:", 15)
-            );
-            if (cl_pos){
-                cl_pos += 15;
-                // 跳过空格/制表符
-                while(cl_pos < header_end && (*cl_pos == ' ' || *cl_pos == '\t')) cl_pos++;
-                // 找到行尾 \r\n 或 header_end
-                const char* cl_end = static_cast<const char*>(
-                    memmem(cl_pos, header_end - cl_pos, "\r\n", 2)
-                );
-                if (!cl_end) cl_end = header_end;
+            pending_content_length_ = parse_content_length(data, header_len);
 
-                auto parsed = parse_int_safe(cl_pos, cl_end);
-                if (parsed.has_value() && parsed.value() >= 0){
-                    pending_content_length_ = parsed.value();
-                }
-
-                // 拒绝超大 Content-Length
-                if (pending_content_length_ > max_request_size_){
-                    close_internal();
-                    return false;
-                }
+            // 拒绝超大 Content-Length
+            if (pending_content_length_ > max_request_size_) {
+                close_internal();
+                return false;
             }
 
             header_parsed_ = true;
 
-            // 如果没有 body（无 Content-Length 或 Content-Length == 0），
-            // 且不是 chunked（暂不处理），认为消息已完整
-            if (pending_content_length_ <= 0){
-                // 消息完整：提取整个 raw 数据，包含后面的 \r\n\r\n
-                size_t total_len = header_len +4;
-
-                std::string raw(read_buf_.readable_data(), total_len);
+            // 无 body 或 Content-Length == 0，消息已完整
+            if (pending_content_length_ <= 0) {
+                size_t total_len = header_len + 4;
+                std::string raw(data, total_len);
                 read_buf_.consume(total_len);
 
                 state_ = State::Processing;

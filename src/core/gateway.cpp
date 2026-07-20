@@ -1,6 +1,7 @@
 #include "gateway/core/gateway.h"
 
-#include "gateway/http/request.h"
+#include "gateway/http/parser.h"   // parse_http_request, HttpRequest
+#include "gateway/http/request.h"  // request_keep_alive
 #include "gateway/http/response.h"
 #include "gateway/logger/logger.h"
 #include "gateway/monitor/stats.h"
