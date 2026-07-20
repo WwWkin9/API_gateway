@@ -1,8 +1,7 @@
 #include "gateway/proxy/load_balancer.h"
 
-#include <algorithm>
+
 #include <random>
-#include <sstream>
 #include <thread>
 
 // ============== 工具 ==============
