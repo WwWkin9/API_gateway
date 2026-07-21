@@ -1,14 +1,18 @@
 #include "gateway/proxy/backend_pool.h"
 
-#include <iostream>
-#include <sstream>
+#include <cstdio>
 
 // ============== 工具：生成 key ==============
 
 std::string BackendPool::make_key(const std::string& host, int port) {
-    std::ostringstream oss;
-    oss << host << ':' << port;
-    return oss.str();
+    std::string key;
+    key.reserve(host.size() + 12);
+    key += host;
+    key += ':';
+    char port_buf[16];
+    snprintf(port_buf, sizeof(port_buf), "%d", port);
+    key += port_buf;
+    return key;
 }
 
 std::string BackendPool::make_key(const Backend& backend) {
@@ -27,29 +31,37 @@ BackendPool::BackendPool(size_t max_idle_per_host, int idle_timeout_sec)
 std::shared_ptr<BackendConnection> BackendPool::acquire(const Backend& backend, int connect_timeout_ms) {
     std::string key = make_key(backend);
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    // 1. 尝试从空闲队列取一个健康连接（加锁）
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    auto& entry = pools_[key];
-    entry.active_count++;
+        auto& entry = pools_[key];
+        entry.active_count++;
 
-    // 1. 尝试从空闲队列取一个健康连接
-    while (!entry.idle.empty()) {
-        auto conn = entry.idle.front();
-        entry.idle.pop();
-        
-        if (conn->is_alive()) {
-            conn->touch();
-            return conn;
+        while (!entry.idle.empty()) {
+            auto conn = entry.idle.front();
+            entry.idle.pop();
+            
+            if (conn->is_alive()) {
+                conn->touch();
+                return conn;
+            }
+            // 不健康的连接直接丢弃
         }
-        // 不健康的连接直接丢弃
     }
-    // 2. 空闲队列为空，新建连接
+    // 2. 空闲队列为空，新建连接（不加锁，避免阻塞其他线程）
     auto conn = std::make_shared<BackendConnection>(backend.host, backend.port);
     if (conn->connect(connect_timeout_ms)) {
         return conn;
     }
-    // 3. 连接失败，返回 nullptr
-    entry.active_count--;
+    // 3. 连接失败，回滚 active_count
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = pools_.find(key);
+        if (it != pools_.end() && it->second.active_count > 0) {
+            it->second.active_count--;
+        }
+    }
     return nullptr;
 }
 
@@ -105,13 +117,14 @@ void BackendPool::cleanup_idle() {
     for (auto& [key, entry] : pools_) {
         size_t n = entry.idle.size();
         for (size_t i = 0; i < n; ++i) {
-            auto& conn = entry.idle.front();
+            // 必须拷贝 shared_ptr，因为 pop() 会销毁 deque 元素
+            // 若引用计数刚好为 1（仅队列持有），pop 会释放 BackendConnection
+            // 后续 move 会读取已释放内存导致 use-after-free
+            auto conn = entry.idle.front();
 
             if (now - conn->last_activity() >= idle_timeout_sec_) {
-                entry.idle.pop();  // 超时，丢弃
+                entry.idle.pop();  // 超时，丢弃（conn 析构时释放）
             } else {
-                // 未超时且遍历到第一个未超时的，后面的也不会超时（FIFO）
-                // 但为了安全，仍然逐个检查
                 entry.idle.pop();
                 entry.idle.push(std::move(conn));
             }
@@ -119,20 +132,3 @@ void BackendPool::cleanup_idle() {
     }
 }
 
-// ============== 统计 ==============
-
-size_t BackendPool::idle_count(const Backend& backend) const {
-    std::string key = make_key(backend);
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = pools_.find(key);
-    return it != pools_.end() ? it->second.idle.size() : 0;
-}
-
-size_t BackendPool::total_idle() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    size_t total = 0;
-    for (const auto& [key, entry] : pools_) {
-        total += entry.idle.size();
-    }
-    return total;
-}

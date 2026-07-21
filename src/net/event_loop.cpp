@@ -20,7 +20,7 @@ EventLoop::EventLoop(int max_events) : epfd_(epoll_create1(0)), running_(false),
         close(epfd_);
         throw std::runtime_error("failed to create eventfd");
     }
-    add_fd(wakeup_fd_, EPOLLIN);
+    add_fd(wakeup_fd_, EPOLLIN | EPOLLET);
     set_callback(wakeup_fd_, [this](int fd, uint32_t) {
         uint64_t val;
         while (::read(fd, &val, sizeof(val)) == sizeof(val)) {}
@@ -106,14 +106,42 @@ void EventLoop::defer(Task task) {
 }
 
 // 在事件循环线程批量执行 defer 任务（锁内交换，锁外执行，避免回调中 defer 死锁）
+// 每轮最多执行 max_deferred_per_round_ 个任务，剩余暂存到 pending_tasks_，
+// 防止大量 defer 任务一次性执行导致 event loop 长时间阻塞（饿死）
 void EventLoop::run_deferred_tasks() {
     std::vector<Task> tasks;
     {
         std::lock_guard<std::mutex> lock(defer_mutex_);
         tasks.swap(deferred_tasks_);
     }
-    for (auto& task : tasks) {
-        task();
+
+    // 先把上一轮残留的 pending 任务合并到 tasks 前面
+    if (!pending_tasks_.empty()) {
+        tasks.insert(tasks.begin(),
+                     std::make_move_iterator(pending_tasks_.begin()),
+                     std::make_move_iterator(pending_tasks_.end()));
+        pending_tasks_.clear();
+    }
+
+    int batch_limit = max_deferred_per_round_;
+    size_t total = tasks.size();
+
+    if (batch_limit > 0 && static_cast<int>(total) > batch_limit) {
+        // 只执行前 batch_limit 个，剩余暂存
+        for (int i = 0; i < batch_limit; ++i) {
+            tasks[i]();
+        }
+        for (size_t i = batch_limit; i < total; ++i) {
+            pending_tasks_.push_back(std::move(tasks[i]));
+        }
+        // 还有剩余任务，唤醒下一轮继续处理
+        uint64_t val = 1;
+        ssize_t n = ::write(wakeup_fd_, &val, sizeof(val));
+        (void)n;
+    } else {
+        for (auto& task : tasks) {
+            task();
+        }
     }
 }
 

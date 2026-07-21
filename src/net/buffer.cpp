@@ -1,6 +1,5 @@
 #include "gateway/net/buffer.h"
 
-#include <cerrno>
 #include <cstring>
 #include <sys/uio.h>
 #include <unistd.h>

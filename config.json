@@ -1,7 +1,7 @@
 {
     "listen_port": 8080,
-    "keep_alive_timeout_sec": 10,
-    "thread_count": 4,
+    "keep_alive_timeout_sec": 3600,
+    "thread_count": 16,
     "backend_timeout_ms": 3000,
     "max_request_size": 65536,
     "max_epoll_events": 512,

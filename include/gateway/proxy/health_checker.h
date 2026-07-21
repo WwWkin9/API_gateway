@@ -42,7 +42,6 @@ public:
     // ---- 后端管理 ----
     void add_backend(const Backend& backend);
     void remove_backend(const Backend& backend);
-    void clear();
 
     // ---- 健康检查 ----
     // 对所有已注册后端执行一次 TCP 连接健康检查
@@ -51,11 +50,7 @@ public:
     // ---- 查询 ----
     bool is_healthy(const Backend& backend) const;
 
-    // 获取所有健康后端（用于 LoadBalancer 选择列表的输入过滤）
-    std::vector<Backend> healthy_backends() const;
-
-    size_t backend_count() const;
-
+private:
     struct BackendHealth {
         Backend backend;
         bool healthy = false;
@@ -63,14 +58,9 @@ public:
         int consecutive_failures = 0;
     };
 
-    // 获取所有后端健康状态快照
-    std::vector<BackendHealth> snapshot() const;
-
-private:
     static std::string make_key(const std::string& host, int port);
     static std::string make_key(const Backend& backend);
 
-    // 对单个后端执行 TCP 连接检查
     bool tcp_check(const Backend& backend) const;
 
     int interval_ms_ = 5000;

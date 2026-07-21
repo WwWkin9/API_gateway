@@ -1,5 +1,5 @@
 #include "gateway/net/connection.h"
-#include "gateway/http/parser.h"   // parse_content_length, HttpParser
+#include "gateway/http/parser.h"   // HttpParser
 #include "gateway/logger/logger.h"
 
 #include <sys/epoll.h>
@@ -35,6 +35,7 @@ void Connection::set_close_callback(CloseCallback cb) {
 
 // ============== 读事件处理 ==============
 
+// ET 模式：必须循环读取直到 EAGAIN，否则残留数据不会再触发通知
 void Connection::on_read() {
     // Closing 状态：已发送 FIN，只需等待客户端 EOF
     if (state_ == State::Closing) {
@@ -48,7 +49,7 @@ void Connection::on_read() {
     last_active_time_ = std::time(nullptr);
     LOG_DEBUG("on_read fd=%d start", fd_);
 
-    // 循环读取直到 EAGAIN，一次性取走内核缓冲区的所有数据
+    // ET 模式：循环读取直到 EAGAIN，一次性取走内核缓冲区的所有数据
     while (true) {
         ssize_t n = read_buf_.read_from_fd(fd_);
         if (n == 0) {
@@ -132,7 +133,7 @@ void Connection::on_write() {
 void Connection::finish_response() {
     if (keep_alive_) {
         state_ = State::Reading;
-        event_loop_->mod_fd(fd_, EPOLLIN);
+        event_loop_->mod_fd(fd_, EPOLLIN | EPOLLET);
         parser_.reset();
         // 处理已读入 partial_ 中的管道请求数据
         if (parser_.pending_size() > 0) {
@@ -143,7 +144,7 @@ void Connection::finish_response() {
         // 然后等待客户端读取完数据后关闭（客户端 EOF 时 on_read 会调用 close_internal）
         ::shutdown(fd_, SHUT_WR);
         state_ = State::Closing;
-        event_loop_->mod_fd(fd_, EPOLLIN);
+        event_loop_->mod_fd(fd_, EPOLLIN | EPOLLET);
     }
 }
 
@@ -169,7 +170,7 @@ void Connection::send_internal(const std::string& data, bool keep_alive) {
     write_buf_.append(data);
 
     state_ = State::Writing;
-    event_loop_->mod_fd(fd_, EPOLLIN | EPOLLOUT);
+    event_loop_->mod_fd(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
 
     on_write();
 }

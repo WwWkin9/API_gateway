@@ -1,0 +1,70 @@
+[INFO] Base URL: http://127.0.0.1:8080
+[INFO] Lua script: scripts/wrk_mixed.lua
+[INFO] CSV output: bench_results/summary_20260721_020641.csv
+[INFO] Log output: bench_results/run_20260721_020641.log
+
+[STEP] Warmup
+[INFO] warmup: c=50 t=4 d=5s
+Running 5s test @ http://127.0.0.1:8080
+  4 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    18.74ms    7.61ms  37.33ms   61.02%
+    Req/Sec   147.50      5.00   150.00     75.00%
+  Latency Distribution
+     50%   18.62ms
+     75%   23.55ms
+     90%   30.17ms
+     99%   37.33ms
+  59 requests in 5.09s, 8.18KB read
+Requests/sec:     11.59
+Transfer/sec:      1.61KB
+
+[STEP] Staircase benchmark
+[INFO] staircase: c=50 t=4 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  4 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    18.80ms    8.00ms  35.53ms   68.09%
+    Req/Sec   117.75      5.19   121.00     75.00%
+  Latency Distribution
+     50%   18.51ms
+     75%   24.00ms
+     90%   30.54ms
+     99%   35.53ms
+  47 requests in 10.09s, 6.52KB read
+Requests/sec:      4.66
+Transfer/sec:     661.21B
+
+[INFO] staircase: c=100 t=4 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  4 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    34.90ms   17.68ms  69.39ms   55.88%
+    Req/Sec    84.50     64.08   150.00     62.50%
+  Latency Distribution
+     50%   33.63ms
+     75%   51.00ms
+     90%   59.07ms
+     99%   69.39ms
+  68 requests in 10.07s, 9.43KB read
+Requests/sec:      6.75
+Transfer/sec:      0.94KB
+
+[INFO] staircase: c=200 t=4 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  4 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   100.88ms   40.56ms 168.77ms   60.80%
+    Req/Sec   123.12     65.20   267.00     68.75%
+  Latency Distribution
+     50%  108.48ms
+     75%  135.88ms
+     90%  149.96ms
+     99%  168.66ms
+  199 requests in 10.07s, 27.60KB read
+Requests/sec:     19.76
+Transfer/sec:      2.74KB
+
+[DONE] Benchmark finished.
+[DONE] CSV: bench_results/summary_20260721_020641.csv
+[DONE] LOG: bench_results/run_20260721_020641.log

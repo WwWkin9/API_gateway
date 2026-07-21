@@ -60,4 +60,6 @@ add_executable(gateway
 )
 
 add_executable(user_server backend/user_server.cpp)
+target_include_directories(user_server PRIVATE backend)
 add_executable(order_server backend/order_server.cpp)
+target_include_directories(order_server PRIVATE backend)

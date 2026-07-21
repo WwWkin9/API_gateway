@@ -29,7 +29,7 @@ void TCPServer::start() {
         return;
     }
 
-    event_loop_->add_fd(listen_fd_, EPOLLIN);
+    event_loop_->add_fd(listen_fd_, EPOLLIN | EPOLLET);
     event_loop_->set_callback(listen_fd_, [this](int fd, uint32_t /*events*/){
         (void)fd; // 忽略 fd，因为 accept 会返回新连接的 fd
         on_accept();

@@ -3,8 +3,6 @@
 #include "gateway/core/config.h"    // Backend
 #include "gateway/proxy/backend_pool.h"  // BackendPool
 
-
-
 #include <string>
 #include <sys/socket.h>
 #include <utility>

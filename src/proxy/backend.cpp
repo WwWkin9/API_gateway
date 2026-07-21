@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
+#include <string_view>
 
 BackendConnection::BackendConnection(const std::string& host, int port)
     : host_(host), port_(port) 
@@ -92,6 +93,8 @@ std::string BackendConnection::recv_all(int timeout_ms) {
     char buf[4096];
     bool got_data = false;
     bool eof = false;
+    ssize_t content_length = -1;  // -1 表示尚未解析
+    size_t header_end = std::string::npos;
 
     while (true){
         pollfd pfd{};
@@ -107,6 +110,40 @@ std::string BackendConnection::recv_all(int timeout_ms) {
         if (n > 0) {
             resp.append(buf, static_cast<size_t>(n));
             got_data = true;
+
+            // 解析 Content-Length（仅解析一次）
+            if (content_length < 0) {
+                header_end = resp.find("\r\n\r\n");
+                if (header_end != std::string::npos) {
+                    // 查找 Content-Length 头
+                    std::string_view headers(resp.data(), header_end);
+                    size_t cl_pos = headers.find("\r\nContent-Length:");
+                    if (cl_pos == std::string::npos) {
+                        cl_pos = headers.find("\r\ncontent-length:");
+                    }
+                    if (cl_pos != std::string::npos) {
+                        // 跳过 "\r\nContent-Length:" 和可能的空格
+                        const char* val_start = headers.data() + cl_pos + 17; // len("\r\nContent-Length:") = 17
+                        while (val_start < headers.data() + headers.size() && *val_start == ' ') val_start++;
+                        content_length = 0;
+                        while (val_start < headers.data() + headers.size() && *val_start >= '0' && *val_start <= '9') {
+                            content_length = content_length * 10 + (*val_start - '0');
+                            val_start++;
+                        }
+                    } else {
+                        // 没有 Content-Length，可能是 chunked 或无 body，设 0 以依赖超时
+                        content_length = 0;
+                    }
+                }
+            }
+
+            // 检查是否已收到完整响应
+            if (content_length >= 0 && header_end != std::string::npos) {
+                size_t total_expected = header_end + 4 + static_cast<size_t>(content_length);
+                if (resp.size() >= total_expected) {
+                    break;  // 完整响应已收到
+                }
+            }
         } else if (n == 0) {
             eof = true;  // 对端正常关闭
             break;

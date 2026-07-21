@@ -146,7 +146,7 @@ std::string Proxy::forward_pooled(const Backend& backend, const std::string& raw
         return make_502_response();
     }
 
-    // 2. 发送请求
+    // 2. 发送请求（保持原始 Connection 头，由 recv_all 通过 Content-Length 精确判断响应结束）
     if (!conn->send_all(raw_request.data(), raw_request.size(), backend_timeout_ms_)) {
         pool_->evict(backend, std::move(conn));
         return make_502_response();

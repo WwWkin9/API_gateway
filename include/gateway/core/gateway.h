@@ -42,6 +42,8 @@ private:
     // 连接管理（shared_ptr：被 EventLoop 的 lambda 捕获）
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
     mutable std::mutex connections_mutex_;
+    std::atomic<int> connection_count_{0};  // 当前连接数（无锁快速读取）
+    int max_connections_ = 0;
 
     // 路由表
     std::unique_ptr<Router> router_;
@@ -63,7 +65,8 @@ private:
     std::vector<std::unique_ptr<Filter>> filters_;
 
     // 线程池 worker：对已读取的 raw 进行解析、过滤、转发
-    void process_request(int fd, std::string raw);
+    // 通过 shared_ptr 持有 Connection，防止 fd 复用导致的 use-after-close
+    void process_request(std::shared_ptr<Connection> conn, std::string raw);
 
     void cleanup_idle_connections();
 
@@ -71,7 +74,7 @@ private:
     CircuitBreaker& get_circuit_breaker(const Backend& backend);
 
     // 发送错误响应并关闭连接
-    void send_error_and_close(int fd, const std::string& resp);
+    void send_error_and_close(std::shared_ptr<Connection> conn, const std::string& resp);
 
     // 内部端点（/stats, /metrics, /health）
     bool handle_internal_endpoint(const std::string& path, std::string& response);

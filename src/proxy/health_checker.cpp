@@ -7,14 +7,19 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
-#include <sstream>
+#include <cstdio>
 
 // ============== 工具：生成 key ==============
 
 std::string HealthChecker::make_key(const std::string& host, int port) {
-    std::ostringstream oss;
-    oss << host << ':' << port;
-    return oss.str();
+    std::string key;
+    key.reserve(host.size() + 12);
+    key += host;
+    key += ':';
+    char port_buf[16];
+    snprintf(port_buf, sizeof(port_buf), "%d", port);
+    key += port_buf;
+    return key;
 }
 
 std::string HealthChecker::make_key(const Backend& backend) {
@@ -34,11 +39,6 @@ void HealthChecker::add_backend(const Backend& backend) {
 void HealthChecker::remove_backend(const Backend& backend) {
     std::lock_guard<std::mutex> lock(mutex_);
     backends_.erase(make_key(backend));
-}
-
-void HealthChecker::clear() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    backends_.clear();
 }
 
 // ============== TCP 连接检查 ==============
@@ -146,31 +146,4 @@ bool HealthChecker::is_healthy(const Backend& backend) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = backends_.find(make_key(backend));
     return it != backends_.end() && it->second.healthy;
-}
-
-std::vector<Backend> HealthChecker::healthy_backends() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<Backend> result;
-    result.reserve(backends_.size());
-    for (const auto& [key, bh] : backends_) {
-        if (bh.healthy) {
-            result.push_back(bh.backend);
-        }
-    }
-    return result;
-}
-
-size_t HealthChecker::backend_count() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return backends_.size();
-}
-
-std::vector<HealthChecker::BackendHealth> HealthChecker::snapshot() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<BackendHealth> result;
-    result.reserve(backends_.size());
-    for (const auto& [key, bh] : backends_) {
-        result.push_back(bh);
-    }
-    return result;
 }

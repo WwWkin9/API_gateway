@@ -1,5 +1,6 @@
 #include "gateway/utils/utils.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <string>

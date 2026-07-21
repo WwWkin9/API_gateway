@@ -16,12 +16,12 @@
 
 #include <algorithm>
 #include <ctime>
+#include <cstring>
 #include <sstream>
-#include <string.h>
-
-
 
 Gateway::Gateway(const GatewayConfig& config) : config_(config) {
+    LOG_INFO("Gateway: config has %zu routes", config.routes.size());
+    max_connections_ = config.max_connections;
     router_ = std::make_unique<Router>(config.routes);
     proxy_ = std::make_unique<Proxy>(config.backend_timeout_ms);
     load_balancer_ = std::make_unique<LoadBalancer>(LBAlgorithm::RoundRobin);
@@ -40,32 +40,25 @@ void Gateway::add_filter(std::unique_ptr<Filter> filter) {
     filters_.push_back(std::move(filter));
 }
 
-void Gateway::process_request(int fd, std::string raw) {
-    LOG_DEBUG("process_request fd=%d raw_len=%zu", fd, raw.size());
+void Gateway::process_request(std::shared_ptr<Connection> conn, std::string raw) {
+    int fd = conn->fd();
+
     // 1. 解析请求
     HttpRequest req;
     if (!parse_http_request(raw, req)) {
-        LOG_DEBUG("process_request fd=%d parse failed", fd);
-        send_error_and_close(fd, make_400(false).to_string());
+        LOG_WARN("process_request fd=%d parse failed", fd);
+        send_error_and_close(conn, make_400(false).to_string());
         return;
     }
+
+    LOG_DEBUG("process_request fd=%d path=[%s] method=[%s]", fd, req.path.c_str(), req.method.c_str());
 
     // 2. 检查内部端点
     std::string internal_resp;
     if (handle_internal_endpoint(req.path, internal_resp)) {
         LOG_DEBUG("process_request fd=%d internal endpoint %s", fd, req.path.c_str());
-        std::shared_ptr<Connection> conn;
-        {
-            std::lock_guard<std::mutex> lock(connections_mutex_);
-            auto it = connections_.find(fd);
-            if (it != connections_.end()) conn = it->second;
-        }
-        if (conn) {
-            LOG_DEBUG("process_request fd=%d sending internal resp len=%zu", fd, internal_resp.size());
-            conn->send(internal_resp, false);
-        } else {
-            LOG_WARN("process_request fd=%d connection not found for internal endpoint", fd);
-        }
+        LOG_DEBUG("process_request fd=%d sending internal resp len=%zu", fd, internal_resp.size());
+        conn->send(internal_resp, false);
         return;
     }
 
@@ -75,7 +68,7 @@ void Gateway::process_request(int fd, std::string raw) {
     for (auto& f : filters_) {
         if (!f->on_request(fctx)) {
             GatewayStats::instance().inc_rate_limited();
-            send_error_and_close(fd, make_400(false).to_string());
+            send_error_and_close(conn, make_400(false).to_string());
             return;
         }
     }
@@ -85,9 +78,11 @@ void Gateway::process_request(int fd, std::string raw) {
     // 4. 路由 + 负载均衡
     auto backends = router_->match(req.path);
     if (!backends.has_value()) {
-        send_error_and_close(fd, make_404(false).to_string());
+        LOG_WARN("process_request fd=%d route NOT FOUND for path=[%s]", fd, req.path.c_str());
+        send_error_and_close(conn, make_404(false).to_string());
         return;
     }
+    LOG_DEBUG("process_request fd=%d route matched, backends=%zu", fd, backends->size());
     Backend target = load_balancer_->select(backends.value());
 
     // 4. 断路器检查
@@ -100,7 +95,7 @@ void Gateway::process_request(int fd, std::string raw) {
             "Connection: close\r\n"
             "\r\n"
             "Service Unavailable";
-        send_error_and_close(fd, resp503);
+        send_error_and_close(conn, resp503);
         return;
     }
 
@@ -129,14 +124,15 @@ void Gateway::process_request(int fd, std::string raw) {
     // 找到响应头尾分隔点，后续多次复用，避免重复扫描
     size_t hdr_end = out.find("\r\n\r\n");
 
-    // 7. 如果后端没写 Connection 头，简单补上
     if (hdr_end != std::string::npos) {
-        std::string_view head(out.data(), hdr_end + 2);  // 包含末尾 \r\n
-        bool has_conn = (::memmem(head.data(), head.size(), "\r\nConnection:", 13) != nullptr) ||
-                        (::memmem(head.data(), head.size(), "\r\nconnection:", 13) != nullptr);
+        std::string_view head(out.data(), hdr_end + 2);
+        bool has_conn = (::memmem(head.data(), head.size(), "\r\nConnection:", 13) != nullptr);
+        if (!has_conn) {
+            has_conn = (::memmem(head.data(), head.size(), "\r\nconnection:", 13) != nullptr);
+        }
         if (!has_conn) {
             out.insert(hdr_end, "\r\nConnection: close");
-            hdr_end += 21;  // 插入后新的头尾位置
+            hdr_end += 21;
         }
     }
 
@@ -180,28 +176,14 @@ void Gateway::process_request(int fd, std::string raw) {
         }
     }
 
-    // 9. 通过 Connection 发送（锁内取 shared_ptr，锁外 send，防止锁竞争 + 死锁）
-    std::shared_ptr<Connection> conn;
-    {
-        std::lock_guard<std::mutex> lock(connections_mutex_);
-        auto it = connections_.find(fd);
-        if (it != connections_.end()) conn = it->second;
+    // 9. 通过 Connection 发送（直接使用持有的 shared_ptr，避免 fd 复用问题）
+    bool ka = request_keep_alive(req);
+    // 如果后端响应要求关闭连接，则不应保持客户端连接
+    if (ka && (out.find("\r\nConnection: close") != std::string::npos ||
+               out.find("\r\nconnection: close") != std::string::npos)) {
+        ka = false;
     }
-    if (conn) {
-        bool ka = request_keep_alive(req);
-        // 如果后端响应要求关闭连接，则不应保持客户端连接
-        if (!ka) {
-            // already false
-        } else if (out.find("\r\nConnection: close") != std::string::npos ||
-                   out.find("\r\nconnection: close") != std::string::npos) {
-            ka = false;
-        }
-        conn->send(out, ka);
-    } else {
-        // 连接已不在（不应发生），直接写 + 关闭
-        send(fd, out.c_str(), out.size(), MSG_NOSIGNAL);
-        close(fd);
-    }
+    conn->send(out, ka);
 }
 
 CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
@@ -209,7 +191,9 @@ CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
     key.reserve(backend.host.size() + 12);
     key += backend.host;
     key += ':';
-    key += std::to_string(backend.port);
+    char port_buf[16];
+    snprintf(port_buf, sizeof(port_buf), "%d", backend.port);
+    key += port_buf;
 
     // 快速路径：不加锁先查找
     {
@@ -226,19 +210,8 @@ CircuitBreaker& Gateway::get_circuit_breaker(const Backend& backend) {
     ).first->second;
 }
 
-void Gateway::send_error_and_close(int fd, const std::string& resp) {
-    std::shared_ptr<Connection> conn;
-    {
-        std::lock_guard<std::mutex> lock(connections_mutex_);
-        auto it = connections_.find(fd);
-        if (it != connections_.end()) conn = it->second;
-    }
-    if (conn) {
-        conn->send(resp, false);
-    } else {
-        ::send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
-        ::close(fd);
-    }
+void Gateway::send_error_and_close(std::shared_ptr<Connection> conn, const std::string& resp) {
+    conn->send(resp, false);
 }
 
 void Gateway::cleanup_idle_connections() {
@@ -247,8 +220,8 @@ void Gateway::cleanup_idle_connections() {
     auto it = connections_.begin();
     while (it != connections_.end()) {
         if (now - it->second->last_active_time() > config_.keep_alive_timeout_sec) {
-            it->second->force_close();
-            it = connections_.erase(it);
+            it->second->force_close();         // 延迟关闭，close_callback 会清理计数
+            it = connections_.erase(it);       // 从 map 移除（close_callback 会做双重擦除，无害）
         } else {
             ++it;
         }
@@ -342,29 +315,40 @@ void Gateway::run() {
     // ---- 2. 初始化定时器并关联到 EventLoop ----
     timer_ = std::make_unique<Timer>();
     event_loop_->set_timer(timer_.get());
+    event_loop_->set_max_deferred_per_round(config_.max_deferred_per_round);
 
     // ---- 3. 创建线程池 ----
-    pool_ = std::make_unique<ThreadPool>(config_.thread_count);
+    pool_ = std::make_unique<ThreadPool>(config_.thread_count, config_.max_queue_size);
 
     // ---- 4. 注册 listen_fd 的回调: accept 接受新连接 ----
     tcp_server_ = std::make_unique<TCPServer>(event_loop_.get(), config_.listen_port);
     tcp_server_->set_new_connection_callback([this](int cfd, std::string peer_ip, int peer_port){
         (void)peer_ip;
         (void)peer_port;
+
+        // 连接数上限检查：超限时直接关闭新连接，避免 OOM
+        if (max_connections_ > 0 && connection_count_.load() >= max_connections_) {
+            ::close(cfd);
+            LOG_WARN("Gateway: connection limit reached (%d), rejecting new connection",
+                     max_connections_);
+            return;
+        }
+
         auto conn = std::make_shared<Connection>(
                event_loop_.get(), cfd, config_.max_request_size
         );
       
-        conn->set_message_callback([this](int fd, std::string raw) {
-            pool_->submit([this, fd, raw = std::move(raw)]() {
-                process_request(fd, std::move(raw));
+        conn->set_message_callback([this, conn](int /*fd*/, std::string raw) {
+            pool_->submit([this, conn, raw = std::move(raw)]() {
+                process_request(conn, std::move(raw));
             });
         });
         conn->set_close_callback([this](int fd) {
             std::lock_guard<std::mutex> lock(connections_mutex_);
             connections_.erase(fd);
+            connection_count_--;
         });
-        event_loop_->add_fd(cfd, EPOLLIN);
+        event_loop_->add_fd(cfd, EPOLLIN | EPOLLET);
         event_loop_->set_callback(cfd, [this, conn](int /*fd*/, uint32_t events) mutable{
            if (events & EPOLLIN) {
                conn->on_read();
@@ -380,6 +364,7 @@ void Gateway::run() {
             std::lock_guard<std::mutex> lock(connections_mutex_);
             connections_[cfd] = conn;
         }
+        connection_count_++;
     });
     tcp_server_->start();
 

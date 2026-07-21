@@ -1,0 +1,24 @@
+[INFO] Base URL: http://127.0.0.1:8080
+[INFO] Lua script: scripts/wrk_mixed.lua
+[INFO] CSV output: bench_results/summary_20260721_023318.csv
+[INFO] Log output: bench_results/run_20260721_023318.log
+
+[STEP] Warmup
+[INFO] warmup: c=50 t=8 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  8 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.01s   529.37ms   1.82s    55.56%
+    Req/Sec     7.98      7.37    20.00     61.90%
+  Latency Distribution
+     50%    1.01s 
+     75%    1.43s 
+     90%    1.82s 
+     99%    1.82s 
+  97 requests in 10.10s, 14.57KB read
+  Socket errors: connect 0, read 48, write 19066, timeout 61
+Requests/sec:      9.60
+Transfer/sec:      1.44KB
+
+[STEP] Staircase benchmark
+[INFO] staircase: c=50 t=8 d=30s

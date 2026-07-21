@@ -35,9 +35,7 @@ public:
     // 清理所有后端中超过 idle_timeout_sec 的空闲连接
     void cleanup_idle();
 
-    // ---- 统计 ----
-    size_t idle_count(const Backend& backend) const;
-    size_t total_idle() const;
+    
 private:
     static std::string make_key(const std::string& host, int port);
     static std::string make_key(const Backend& backend);

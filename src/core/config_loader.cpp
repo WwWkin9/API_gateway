@@ -8,13 +8,7 @@
 #include <string>
 #include <vector>
 
-// ============== 内部错误状态 ==============
-
 static std::string g_last_error;
-
-const char* config_loader_last_error() {
-    return g_last_error.c_str();
-}
 
 // ============== 递归下降 JSON 解析器 ==============
 
@@ -395,6 +389,12 @@ static std::optional<GatewayConfig> parse_config(const std::string& json) {
             cfg.pool_max_idle_per_host = parser.read_int(cfg.pool_max_idle_per_host);
         } else if (key == "pool_idle_timeout_sec") {
             cfg.pool_idle_timeout_sec = parser.read_int(cfg.pool_idle_timeout_sec);
+        } else if (key == "max_connections") {
+            cfg.max_connections = parser.read_int(cfg.max_connections);
+        } else if (key == "max_queue_size") {
+            cfg.max_queue_size = parser.read_int(cfg.max_queue_size);
+        } else if (key == "max_deferred_per_round") {
+            cfg.max_deferred_per_round = parser.read_int(cfg.max_deferred_per_round);
         } else if (key == "routes") {
             // 解析路由数组
             if (parser.current_type() != JsonParser::TokenType::ArrayStart) {
@@ -446,13 +446,17 @@ static std::optional<GatewayConfig> parse_config(const std::string& json) {
                                 }
 
                                 parser.advance();  // Comma 或 }
+                                // 跳过 Comma 到下一个 key
+                                if (parser.current_type() == JsonParser::TokenType::Comma) {
+                                    parser.advance();
+                                }
                             }
 
                             if (!backend.host.empty() && backend.port > 0) {
                                 route.backends.push_back(backend);
                             }
 
-                            // current_type 应该是 Comma 或 }
+                            // current_type 是 ObjectEnd 或 Comma
                             if (parser.current_type() == JsonParser::TokenType::Comma) {
                                 parser.advance();  // 下一个 backend
                             }
@@ -463,15 +467,27 @@ static std::optional<GatewayConfig> parse_config(const std::string& json) {
                     }
 
                     parser.advance();  // Comma 或 }
+                    // 跳过 Comma 到下一个 key
+                    if (parser.current_type() == JsonParser::TokenType::Comma) {
+                        parser.advance();
+                    }
                 }
 
                 if (!route.prefix.empty() && !route.backends.empty()) {
                     cfg.routes.push_back(route);
                 }
 
-                // current_type 应该是 Comma 或 }
+                // 在 route 对象的 } 之后：推进到 Comma（多 route）或 ArrayEnd
+                // 当前可能是 ArrayEnd(backend 数组结尾) 或 ObjectEnd(route 结尾)
+                parser.advance();
+                // consume route 的 ObjectEnd 才能到达 Comma 或 ArrayEnd
+                if (parser.current_type() == JsonParser::TokenType::ObjectEnd) {
+                    parser.advance();
+                }
+
+                // current_type 现在是 Comma 或 ArrayEnd
                 if (parser.current_type() == JsonParser::TokenType::Comma) {
-                    parser.advance();  // 下一个 route
+                    parser.advance();  // 下一个 route 的 {
                 }
             }
             // current_type 现在是 ArrayEnd
@@ -481,8 +497,12 @@ static std::optional<GatewayConfig> parse_config(const std::string& json) {
         }
 
         parser.advance();  // Comma 或 }
+        // 跳过 Comma 到下一个 key
+        if (parser.current_type() == JsonParser::TokenType::Comma) {
+            parser.advance();
+        }
 
-        if (parser.current_type() != JsonParser::TokenType::Comma &&
+        if (parser.current_type() != JsonParser::TokenType::String &&
             parser.current_type() != JsonParser::TokenType::ObjectEnd) {
             break;
         }

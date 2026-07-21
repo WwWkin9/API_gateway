@@ -1,0 +1,105 @@
+[INFO] Base URL: http://127.0.0.1:8080
+[INFO] Lua script: scripts/wrk_mixed.lua
+[INFO] CSV output: bench_results/summary_20260721_025044.csv
+[INFO] Log output: bench_results/run_20260721_025044.log
+
+[STEP] Warmup
+[INFO] warmup: c=50 t=8 d=10s
+Running 10s test @ http://127.0.0.1:8080
+  8 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    88.67ms   44.54ms 347.97ms   88.34%
+    Req/Sec    67.26     21.96   140.00     70.89%
+  Latency Distribution
+     50%   77.86ms
+     75%   96.86ms
+     90%  126.00ms
+     99%  289.64ms
+  5387 requests in 10.06s, 790.17KB read
+Requests/sec:    535.48
+Transfer/sec:     78.55KB
+
+[STEP] Staircase benchmark
+[INFO] staircase: c=50 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   167.13ms   92.55ms 449.84ms   70.56%
+    Req/Sec    36.48     18.91   120.00     67.34%
+  Latency Distribution
+     50%  129.55ms
+     75%  211.26ms
+     90%  321.56ms
+     99%  386.75ms
+  8620 requests in 30.08s, 1.24MB read
+  Non-2xx or 3xx responses: 1
+Requests/sec:    286.57
+Transfer/sec:     42.26KB
+
+[INFO] staircase: c=100 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   446.80ms  142.17ms 850.85ms   62.71%
+    Req/Sec    27.83     17.80   118.00     58.68%
+  Latency Distribution
+     50%  435.69ms
+     75%  559.81ms
+     90%  643.58ms
+     99%  759.83ms
+  6390 requests in 30.10s, 0.93MB read
+Requests/sec:    212.29
+Transfer/sec:     31.50KB
+
+[INFO] staircase: c=200 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   819.24ms  137.21ms   1.18s    70.63%
+    Req/Sec    32.36     20.41   130.00     69.66%
+  Latency Distribution
+     50%  818.69ms
+     75%  897.64ms
+     90%    1.01s 
+     99%    1.09s 
+  7218 requests in 30.11s, 1.04MB read
+Requests/sec:    239.74
+Transfer/sec:     35.48KB
+
+[INFO] staircase: c=400 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   872.57ms  147.34ms   1.50s    82.06%
+    Req/Sec    62.38     48.16   271.00     71.04%
+  Latency Distribution
+     50%  847.85ms
+     75%  938.06ms
+     90%    1.05s 
+     99%    1.29s 
+  12011 requests in 30.11s, 1.73MB read
+  Socket errors: connect 0, read 0, write 0, timeout 400
+  Non-2xx or 3xx responses: 3
+Requests/sec:    398.84
+Transfer/sec:     58.66KB
+
+[INFO] staircase: c=800 t=8 d=30s
+Running 30s test @ http://127.0.0.1:8080
+  8 threads and 800 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.54s   546.41ms   2.00s    82.48%
+    Req/Sec    65.32     76.19   594.00     88.83%
+  Latency Distribution
+     50%    1.78s 
+     75%    1.89s 
+     90%    1.96s 
+     99%    1.99s 
+  10187 requests in 30.11s, 1.47MB read
+  Socket errors: connect 0, read 0, write 0, timeout 8709
+  Non-2xx or 3xx responses: 1
+Requests/sec:    338.33
+Transfer/sec:     49.88KB
+
+[DONE] Benchmark finished.
+[DONE] CSV: bench_results/summary_20260721_025044.csv
+[DONE] LOG: bench_results/run_20260721_025044.log

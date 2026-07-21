@@ -52,5 +52,4 @@ public:
     static std::optional<GatewayConfig> load_json(const std::string& json);
 };
 
-// 错误信息（用于调试）
-const char* config_loader_last_error();
+

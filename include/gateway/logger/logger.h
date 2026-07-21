@@ -1,7 +1,9 @@
 #pragma once
 
-#include <cstdio>
+#include <memory>
 #include <string>
+
+class AsyncLogger;
 
 // 日志级别
 enum class LogLevel {
@@ -13,10 +15,11 @@ enum class LogLevel {
     FATAL
 };
 
-// 日志器——线程安全的同步日志前端
+// 日志器——线程安全的同步/异步日志前端
 //
 // 用法:
 //   Logger::instance().set_level(LogLevel::INFO);
+//   Logger::instance().set_async_logger(std::make_unique<AsyncLogger>("logs/gateway.log"));
 //   LOG_INFO("server started on port %d", 8080);
 class Logger {
 public:
@@ -29,9 +32,10 @@ public:
     void set_level(LogLevel level) { level_ = level; }
     LogLevel level() const { return level_; }
 
-    // 输出目标（默认 stdout）
-    void set_output(FILE* fp);
-    bool set_file(const std::string& filepath);
+    
+
+    // 设置异步日志后端（设置后日志将异步写入）
+    void set_async_logger(std::unique_ptr<AsyncLogger> async_logger);
 
     // 核心方法
     void log(LogLevel level, const char* file, int line,
@@ -39,9 +43,10 @@ public:
 
 private:
     Logger() = default;
+    ~Logger() = default;
 
-    FILE* fp_ = stdout;
     LogLevel level_ = LogLevel::INFO;
+    std::unique_ptr<AsyncLogger> async_logger_;
 
     static const char* level_str(LogLevel level);
     static std::string timestamp();

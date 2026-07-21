@@ -1,4 +1,5 @@
 #include "gateway/logger/logger.h"
+#include "gateway/logger/async_logger.h"
 
 #include <cstdarg>
 #include <chrono>
@@ -6,6 +7,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <utility>
 
 // ============== 单例 ==============
 
@@ -14,17 +16,11 @@ Logger& Logger::instance() {
     return inst;
 }
 
-// ============== 输出目标 ==============
-
-void Logger::set_output(FILE* fp) {
-    if (fp) fp_ = fp;
-}
-
-bool Logger::set_file(const std::string& filepath) {
-    FILE* fp = fopen(filepath.c_str(), "a");
-    if (!fp) return false;
-    fp_ = fp;
-    return true;
+void Logger::set_async_logger(std::unique_ptr<AsyncLogger> async_logger) {
+    async_logger_ = std::move(async_logger);
+    if (async_logger_) {
+        async_logger_->start();
+    }
 }
 
 // ============== 时间戳 ==============
@@ -35,8 +31,11 @@ std::string Logger::timestamp() {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                   now.time_since_epoch()) % 1000;
 
+    struct tm tm_buf;
+    localtime_r(&t, &tm_buf);
+
     std::ostringstream oss;
-    oss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
     oss << '.' << std::setw(3) << std::setfill('0') << ms.count();
     return oss.str();
 }
@@ -61,30 +60,30 @@ void Logger::log(LogLevel level, const char* file, int line,
                  const char* fmt, ...) {
     if (level < level_) return;
 
-    // 提取文件名（去掉目录前缀）
     const char* filename = file;
     for (const char* p = file; *p; ++p) {
         if (*p == '/') filename = p + 1;
     }
 
-    // 格式化用户消息
     va_list args;
     va_start(args, fmt);
     char msg_buf[4096];
     vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
     va_end(args);
 
-    // 组装整行日志
     std::ostringstream oss;
     oss << timestamp() << " ["
         << level_str(level) << "] "
         << filename << ":" << line << " "
-        << msg_buf << "\n";
+        << msg_buf;
 
-    // 线程安全输出
-    static std::mutex log_mutex;
-    std::lock_guard<std::mutex> lock(log_mutex);
-
-    fputs(oss.str().c_str(), fp_);
-    fflush(fp_);
+    if (async_logger_) {
+        async_logger_->append(oss.str());
+    } else {
+        static std::mutex log_mutex;
+        std::lock_guard<std::mutex> lock(log_mutex);
+        fputs(oss.str().c_str(), stderr);
+        fputs("\n", stderr);
+        fflush(stderr);
+    }
 }

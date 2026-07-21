@@ -10,7 +10,7 @@
 
 class ThreadPool {
 public:
-    explicit ThreadPool(size_t num_threads);
+    explicit ThreadPool(size_t num_threads, size_t max_queue_size = 0);
     ~ThreadPool();
 
     template <typename F, typename... Args>
@@ -31,6 +31,10 @@ public:
         return result;
     }
 
+    // 提交任务，队列满时返回 false
+    bool try_submit(std::function<void()> job);
+
+    // 提交任务，队列满时阻塞等待（兼容旧接口）
     void submit(std::function<void()> job);
 
     ThreadPool(const ThreadPool&) = delete;
@@ -41,5 +45,7 @@ private:
     std::queue<std::function<void()>> tasks_;
     std::mutex mutex_;
     std::condition_variable cv_;
+    std::condition_variable cv_not_full_;  // 队列非满时通知阻塞的提交者
     bool stop_;
+    size_t max_queue_size_;  // 0 表示不限制
 };

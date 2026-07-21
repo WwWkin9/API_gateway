@@ -3,6 +3,7 @@
 #include <sys/epoll.h>
 #include <functional>
 #include <vector>
+#include <deque>
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
@@ -41,6 +42,9 @@ public:
     // 设置定时器：epoll_wait 会根据最近的定时器到期时间动态调整超时值
     void set_timer(Timer* timer);
 
+    // 设置每轮最多执行的 defer 任务数（防饿死，默认 256，0 表示不限制）
+    void set_max_deferred_per_round(int n) { max_deferred_per_round_ = n; }
+
     void run(int timeout_ms = 1000);
     void stop();
 
@@ -62,6 +66,10 @@ private:
     int wakeup_fd_ = -1;
     std::mutex defer_mutex_;
     std::vector<Task> deferred_tasks_;
+
+    // 分批执行：超过 max_deferred_per_round_ 的任务暂存于此（仅事件循环线程访问）
+    std::deque<Task> pending_tasks_;
+    int max_deferred_per_round_ = 256;
 
     // 计算本次 epoll_wait 的有效超时（结合定时器到期时间）
     int64_t compute_timeout_ms(int default_ms) const;

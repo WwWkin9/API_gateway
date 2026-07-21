@@ -25,16 +25,6 @@ public:
 
     // 按路径匹配后端，返回 std::nullopt 表示无匹配
     std::optional<std::vector<Backend>> match(const std::string& path) const;
-
-    // 动态添加路由
-    void add_route(const Route& route);
-
-    // 按前缀移除路由
-    bool remove_route(const std::string& prefix);
-
-    size_t size() const { return routes_.size(); }
-
-    bool empty() const { return routes_.empty(); }
 private:
     // 按 prefix 长度降序排列，保证最长匹配优先
     std::vector<Route> routes_;

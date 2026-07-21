@@ -24,6 +24,12 @@ struct GatewayConfig {
     int idle_cleanup_interval_sec = 5;   // 空闲连接清理间隔（秒）
     int pool_max_idle_per_host = 10;     // 每个后端最大空闲连接数
     int pool_idle_timeout_sec = 60;      // 连接池空闲连接超时（秒）
+
+    // 高并发保护参数
+    int max_connections = 10000;         // 最大并发连接数（0 表示不限制）
+    int max_queue_size = 2048;           // 线程池任务队列最大长度
+    int max_deferred_per_round = 256;    // 每轮 event loop 最多执行的 defer 任务数
+
     std::vector<Route> routes;
 };
 

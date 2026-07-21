@@ -6,8 +6,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cerrno>
-
 int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;

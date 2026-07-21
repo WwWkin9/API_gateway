@@ -185,18 +185,10 @@ size_t HttpParser::parse(const char* data, size_t len) {
     if (state_ == State::Error || state_ == State::Complete) return 0;
 
     size_t old_pending = partial_.size();
-    std::string data_preview;
-    if (data && len > 0) {
-        data_preview.assign(data, std::min(len, (size_t)200));
-    }
-    LOG_DEBUG("HttpParser::parse len=%zu old_pending=%zu preview=[%s]", len, old_pending, data_preview.c_str());
     size_t old_raw_size = raw_.size();
     partial_.append(data, len);
 
     process();
-
-    LOG_DEBUG("HttpParser::parse done state=%d complete=%d error=%d raw=%zu",
-              (int)state_, complete(), has_error(), raw_.size());
 
     if (!check_size_limit()) return 0;
 
@@ -213,27 +205,22 @@ size_t HttpParser::parse(const char* data, size_t len) {
 
 void HttpParser::process() {
     while (state_ != State::Complete && state_ != State::Error) {
-        LOG_DEBUG("process loop state=%d partial=%zu", (int)state_, partial_.size());
         switch (state_) {
         case State::RequestLine:
             process_request_line();
-            if (state_ == State::Headers) continue;  // 继续处理 headers
+            if (state_ == State::Headers) continue;
             break;
         case State::Headers:      process_headers();      break;
         case State::Body:         process_body();         break;
         case State::ChunkedBody:  process_chunked();      break;
         default: return;
         }
-        // 行级解析：部分行则退出等更多数据
         if (state_ == State::RequestLine || state_ == State::Headers) {
-            LOG_DEBUG("process exit early state=%d partial=%zu", (int)state_, partial_.size());
             return;
         }
-        // Body 解析：partial_ 为空则等更多数据
         if ((state_ == State::Body || state_ == State::ChunkedBody) &&
             partial_.empty() && state_ != State::Complete) return;
     }
-    LOG_DEBUG("process exit state=%d", (int)state_);
 }
 
 // ============== RequestLine ==============
@@ -257,16 +244,12 @@ void HttpParser::process_request_line() {
 // ============== Headers ==============
 
 void HttpParser::process_headers() {
-    LOG_DEBUG("process_headers start partial=%zu", partial_.size());
     while (true) {
         if (partial_.size() < 2) {
-            LOG_DEBUG("process_headers partial<2 exit");
             return;
         }
 
-        // 空行 \r\n 表示头部结束
         if (partial_[0] == '\r' && partial_[1] == '\n') {
-            LOG_DEBUG("process_headers found header end");
             consume_partial(2);
             finalize_headers();
             return;
@@ -274,21 +257,16 @@ void HttpParser::process_headers() {
 
         std::string_view line;
         if (!extract_line(line)) {
-            LOG_DEBUG("process_headers extract_line false");
             return;
         }
         if (line.empty()) {
-            LOG_DEBUG("process_headers empty line");
             consume_line(line);
             continue;
         }
 
-        LOG_DEBUG("process_headers line=[%.*s]", (int)line.size(), line.data());
-
         size_t colon = line.find(':');
         if (colon == std::string_view::npos) {
-            LOG_DEBUG("process_headers no colon, skip");
-            consume_line(line);  // 跳过无效行
+            consume_line(line);
             continue;
         }
 
@@ -299,7 +277,6 @@ void HttpParser::process_headers() {
         while (vs < line.size() && (line[vs] == ' ' || line[vs] == '\t')) ++vs;
         request_.headers[std::move(key)].assign(line.data() + vs, line.size() - vs);
 
-        LOG_DEBUG("process_headers parsed header consumed");
         consume_line(line);
     }
 }
@@ -363,6 +340,16 @@ void HttpParser::process_body() {
     size_t consume = std::min(partial_.size(), remaining);
     consume_partial(consume);
     body_read_ += consume;
+
+    // 如果消费完整个 body，立即提取并标记完成
+    if (body_read_ >= static_cast<size_t>(content_length_)) {
+        const char* r = raw_.data();
+        const char* he = static_cast<const char*>(::memmem(r, raw_.size(), "\r\n\r\n", 4));
+        if (he) {
+            request_.body.assign(he + 4, static_cast<size_t>(content_length_));
+        }
+        state_ = State::Complete;
+    }
 }
 
 static bool parse_hex(std::string_view s, size_t& out) {

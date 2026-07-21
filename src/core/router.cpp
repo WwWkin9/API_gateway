@@ -1,8 +1,12 @@
 #include "gateway/core/router.h"
 
 #include <algorithm>
+#include "gateway/logger/logger.h"
 
 Router::Router(const std::vector<Route>& routes) : routes_(routes) {
+    for (const auto& r : routes_) {
+        LOG_INFO("Router: added route prefix=[%s] backends=%zu", r.prefix.c_str(), r.backends.size());
+    }
     sort_routes();
 }
 
@@ -11,7 +15,6 @@ std::optional<std::vector<Backend>> Router::match(const std::string& path) const
         if (path.size() >= route.prefix.size() &&
             path.compare(0, route.prefix.size(), route.prefix) == 0) {
             if (route.prefix.size() == path.size() || path[route.prefix.size()] == '/') {
-                // 完全匹配，返回后端列表
                 return route.backends;
             }
         }
@@ -19,25 +22,6 @@ std::optional<std::vector<Backend>> Router::match(const std::string& path) const
     return std::nullopt;
 }
 
-void Router::add_route(const Route& route) {
-    remove_route(route.prefix);
-    routes_.push_back(route);
-    sort_routes();
-}
-
-bool Router::remove_route(const std::string& prefix) {
-    auto it = std::remove_if(routes_.begin(), 
-    routes_.end(), 
-    [prefix](const Route& r) {
-        return r.prefix == prefix;
-    });
-
-    if (it != routes_.end()) {
-        routes_.erase(it, routes_.end());
-        return true;
-    }
-    return false;
-}
 void Router::sort_routes() {
     std::sort(routes_.begin(), routes_.end(), [](const Route& a, const Route& b) {
         auto count_slashes = [](const std::string& s) {

@@ -1,34 +1,17 @@
+#include "backend_worker.h"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <csignal>
 #include <iostream>
 #include <string>
-#include <thread>
-
-static void handle_client(int cfd) {
-    std::string req;
-    char buf[4096];
-    ssize_t n;
-    while ((n = recv(cfd, buf, sizeof(buf), 0)) > 0) {
-        req.append(buf, buf + n);
-        if (n < (ssize_t)sizeof(buf)) break;
-    }
-
-    auto pos = req.find("\r\n\r\n");
-    std::string body = (pos != std::string::npos) ? req.substr(pos + 4) : "";
-
-    std::string resp_body = std::string(R"({"service":"order","body":")") + body + R"("})";
-    std::string resp =
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " +
-        std::to_string(resp_body.size()) + "\r\n\r\n" + resp_body;
-
-    send(cfd, resp.c_str(), resp.size(), 0);
-    close(cfd);
-}
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);
+
     int fd = socket(AF_INET, SOCK_STREAM, 0);
 
     int opt = 1;
@@ -40,12 +23,21 @@ int main() {
     addr.sin_port = htons(9002);
 
     bind(fd, (sockaddr*)&addr, sizeof(addr));
-    listen(fd, 128);
+    listen(fd, 1024);
 
-    std::cout << "order server on 9002 (multi-threaded)\n";
+    // 线程池：worker_count = 硬件并发数 × 2
+    unsigned int hw = std::thread::hardware_concurrency();
+    int workers = std::max(4u, hw * 2);
+
+    BackendWorkerPool pool(workers, [](int cfd) {
+        handle_client_keepalive(cfd, "order");
+    });
+
+    std::cout << "order server on 9002 (workers=" << workers << ", keep-alive)\n";
 
     while (true) {
         int cfd = accept(fd, nullptr, nullptr);
-        std::thread(handle_client, cfd).detach();
+        if (cfd < 0) continue;
+        pool.submit(cfd);
     }
 }

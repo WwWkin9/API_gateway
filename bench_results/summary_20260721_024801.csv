@@ -1,0 +1,2 @@
+phase,connections,threads,duration,requests_per_sec,transfer_per_sec,avg_latency,p50,p75,p90,p99,non_2xx_3xx,socket_errors
+warmup,50,8,10s,2.88,446.54B,855.78ms,825.26ms,1.23s,1.44s,1.63s,0,36300
