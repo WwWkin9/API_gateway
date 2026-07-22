@@ -1,3 +1,0 @@
-phase,connections,threads,duration,requests_per_sec,transfer_per_sec,avg_latency,p50,p75,p90,p99,non_2xx_3xx,socket_errors
-warmup,50,8,10s,226.64,33.59KB,205.78ms,176.14ms,300.35ms,377.93ms,428.79ms,0,0
-staircase,50,8,30s,73.80,10.87KB,79.66ms,63.86ms,78.02ms,115.17ms,284.54ms,2,135240

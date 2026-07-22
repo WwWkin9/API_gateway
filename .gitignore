@@ -22,6 +22,15 @@ CMakeFiles/
 cmake_install.cmake
 compile_commands.json
 
+# runtime output
+/logs/
+*.log
+
+# bench results
+/bench_results/
+
+# dependencies / package managers
+
 # core dumps
 core
 *.core

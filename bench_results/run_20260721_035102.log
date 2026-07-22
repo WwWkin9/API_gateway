@@ -1,7 +1,0 @@
-[INFO] Base URL: http://127.0.0.1:8080
-[INFO] Lua script: scripts/wrk_mixed.lua
-[INFO] CSV output: bench_results/summary_20260721_035102.csv
-[INFO] Log output: bench_results/run_20260721_035102.log
-
-[STEP] Warmup
-[INFO] warmup: c=50 t=8 d=10s

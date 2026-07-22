@@ -1,2 +1,0 @@
-phase,connections,threads,duration,requests_per_sec,transfer_per_sec,avg_latency,p50,p75,p90,p99,non_2xx_3xx,socket_errors
-warmup,50,8,10s,0.00,0.00B,0.00us,0.00us,0.00us,0.00us,0.00us,0,380394
