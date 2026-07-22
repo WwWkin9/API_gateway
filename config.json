@@ -8,6 +8,7 @@
     "idle_cleanup_interval_sec": 5,
     "pool_max_idle_per_host": 10,
     "pool_idle_timeout_sec": 60,
+    "max_deferred_per_round": 256,
     "routes": [
         {
             "prefix": "/api/user",

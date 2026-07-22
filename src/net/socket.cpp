@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -10,6 +11,11 @@ int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+int set_tcp_nodelay(int fd) {
+    int opt = 1;
+    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 }
 
 int create_listen_socket(int port) {
@@ -29,7 +35,7 @@ int create_listen_socket(int port) {
         return -1;
     }
 
-    if (listen(fd, 128) < 0) {
+    if (listen(fd, SOMAXCONN) < 0) {
         close(fd);
         return -1;
     }

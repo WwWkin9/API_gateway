@@ -10,6 +10,10 @@
 // 成功返回 0，失败返回 -1
 int set_nonblocking(int fd);
 
-// 创建监听 socket（已设置 SO_REUSEADDR + 非阻塞 + listen(128)）
+// 禁用 Nagle 算法，减少小包延迟
+// 成功返回 0，失败返回 -1
+int set_tcp_nodelay(int fd);
+
+// 创建监听 socket（已设置 SO_REUSEADDR + TCP_NODELAY + 非阻塞 + listen(SOMAXCONN)）
 // 成功返回 fd，失败返回 -1
 int create_listen_socket(int port);

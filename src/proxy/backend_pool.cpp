@@ -132,3 +132,24 @@ void BackendPool::cleanup_idle() {
     }
 }
 
+// ============== 预热 ==============
+
+void BackendPool::warm_up(const std::vector<Backend>& backends, int connect_timeout_ms,
+                          size_t warm_count) {
+    if (backends.empty() || warm_count == 0) return;
+    
+    fprintf(stderr, "[pool] warming up %zu backends with %zu connections each...\n",
+            backends.size(), warm_count);
+    
+    for (const auto& backend : backends) {
+        for (size_t i = 0; i < warm_count; ++i) {
+            auto conn = std::make_shared<BackendConnection>(backend.host, backend.port);
+            if (conn->connect(connect_timeout_ms)) {
+                release(backend, std::move(conn));
+            }
+        }
+    }
+    
+    fprintf(stderr, "[pool] warm_up done\n");
+}
+

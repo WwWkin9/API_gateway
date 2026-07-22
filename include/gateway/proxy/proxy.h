@@ -17,6 +17,7 @@ public:
     ~Proxy() = default;
 
     void set_pool(std::shared_ptr<BackendPool> pool) { pool_ = std::move(pool); }
+    std::shared_ptr<BackendPool> pool() const { return pool_; }
     void cleanup_pool() { if (pool_) pool_->cleanup_idle(); }
 
     std::string forward(const Backend& backend, const std::string& raw_request) const;

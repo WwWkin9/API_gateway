@@ -35,6 +35,10 @@ public:
     // 清理所有后端中超过 idle_timeout_sec 的空闲连接
     void cleanup_idle();
 
+    // 预热连接池：为所有后端预先建立连接，减少首次请求延迟
+    // backend_count: 后端总数，warm_count: 每个后端预建连接数
+    void warm_up(const std::vector<Backend>& backends, int connect_timeout_ms,
+                 size_t warm_count);
     
 private:
     static std::string make_key(const std::string& host, int port);

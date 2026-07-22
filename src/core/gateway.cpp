@@ -371,6 +371,7 @@ void Gateway::run() {
     // ---- 5. 注册周期性定时任务 ----
     // 空闲连接清理
     int cleanup_ms = config_.idle_cleanup_interval_sec * 1000;
+
     timer_->run_every(cleanup_ms, [this]() {
         cleanup_idle_connections();
         proxy_->cleanup_pool();
