@@ -1,6 +1,6 @@
 # C++ API Gateway
 
-> 基于 **Reactor + Thread Pool** 架构的高性能 HTTP 反向代理网关，零外部依赖，从零手写实现。
+> 基于 **Reactor + Thread Pool** 架构的高性能 HTTP 反向代理网关，零外部依赖，从零实现。
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)](https://en.cppreference.com/w/cpp/17)
 [![CMake](https://img.shields.io/badge/CMake-3.10%2B-green)](https://cmake.org/)
